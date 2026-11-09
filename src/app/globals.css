@@ -1,26 +1,191 @@
 @import "tailwindcss";
 
+/* MyoCare design tokens — blue & white, Apple-style restraint.
+   All text colours pass WCAG AA (4.5:1) on white and on --color-canvas. */
+@theme {
+  --color-ink: #0f1e33;
+  --color-ink-2: #43536b;
+  --color-ink-3: #5c6b82;
+  --color-brand: #0b63ce;
+  --color-brand-strong: #084c9e;
+  --color-brand-soft: #e6f0fc;
+  --color-brand-tint: #f3f8fe;
+  --color-canvas: #f4f7fb;
+  --color-line: #e1e8f1;
+  --color-line-strong: #c9d5e4;
+  --color-good: #0f7b3d;
+  --color-good-soft: #e5f5ea;
+  --color-warn: #9a5500;
+  --color-warn-soft: #fff3df;
+  --color-bad: #b42323;
+  --color-bad-soft: #fdeceb;
+
+  /* categorical series (dataviz reference palette, fixed order) */
+  --color-s1: #2a78d6;
+  --color-s2: #eb6834;
+  --color-s3: #1baf7a;
+  --color-s4: #eda100;
+  --color-s5: #e87ba4;
+  --color-s6: #008300;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --radius-card: 1.125rem;
+  --shadow-card: 0 1px 2px rgb(15 30 51 / 0.04), 0 4px 16px -6px rgb(15 30 51 / 0.08);
+  --shadow-pop: 0 2px 6px rgb(15 30 51 / 0.06), 0 24px 48px -12px rgb(15 30 51 / 0.22);
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+}
+
+/* Size-specific tracking: tighten large text, leave body near 0. */
+.display {
+  font-family: var(--font-display);
+  letter-spacing: -0.022em;
+  line-height: 1.08;
+}
+.title {
+  font-family: var(--font-display);
+  letter-spacing: -0.014em;
+  line-height: 1.2;
+}
+.eyebrow {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+  color: var(--color-ink-3);
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visible focus for keyboard users everywhere. */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Translucent chrome (Apple material) */
+.material {
+  background: rgb(255 255 255 / 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* Press feedback on pointer-down */
+.pressable {
+  transition: transform 120ms ease-out, background-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+.pressable:active {
+  transform: scale(0.97);
+}
+
+.fade-in {
+  animation: fade-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+dialog.sheet {
+  border: none;
+  padding: 0;
+  background: transparent;
+  max-width: min(640px, calc(100vw - 32px));
+  width: 100%;
+  margin: auto;
+}
+dialog.sheet::backdrop {
+  background: rgb(15 30 51 / 0.32);
+  backdrop-filter: blur(2px);
+}
+dialog.sheet[open] > .sheet-body {
+  animation: sheet-in 320ms cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* uPlot theme */
+.uplot {
+  font-family: var(--font-sans);
+}
+.u-legend {
+  display: none;
+}
+.u-select {
+  background: rgb(11 99 206 / 0.1);
+}
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 20;
+  background: white;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--color-ink);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+  .pressable:active {
+    transform: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .material {
+    background: white;
+    backdrop-filter: none;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body {
+    background: white;
+  }
 }
