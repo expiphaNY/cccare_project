@@ -32,7 +32,7 @@ GitHub Pages only serves static files, so it can't run the full app (API routes,
 
 **One‑time setup**
 
-1. Push this repo to GitHub. The workflow in `.github/workflows/deploy-pages.yml` assumes the repo root is the folder that contains `web/`.
+1. Push this repo to GitHub. The workflow in `.github/workflows/deploy-pages.yml` assumes the repo root is this `web/` folder (where `package.json` lives). If you put `web/` inside a bigger repo, add `defaults: run: working-directory: web` to the build job and prefix the cache and artifact paths with `web/`.
 2. In the repo go to **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 3. Push to `main` (or run the workflow from the Actions tab). The site appears at `https://<user>.github.io/<repo>/`.
 
