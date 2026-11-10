@@ -45,6 +45,15 @@ import { Badge, Card, CardHeader, btn, cx } from "./ui";
 
 const noSubscribe = () => () => {};
 
+type Nullable = number | null;
+
+/** Fills readings that carried no motion with the nearest real value. */
+function fillGaps(a: Nullable[]): number[] {
+  const first = a.find((x): x is number => x != null) ?? 0;
+  let last = first;
+  return a.map((x) => (x == null ? last : (last = x)));
+}
+
 /** Uniform rate every live set is resampled to before saving. */
 const SAVE_FS = 100;
 const WINDOW_S = 10;
@@ -137,9 +146,11 @@ export function LiveRecorder({
   });
   // Rolling display buffer (seconds since connect, mV, accel g).
   const t0 = useRef(0);
-  const buf = useRef({ t: [] as number[], v: [] as number[], ax: [] as number[], ay: [] as number[], az: [] as number[], last: 0, rawEma: 0 });
+  // Motion arrays stay aligned with t: null where a reading carried no motion
+  // (e.g. the first packets before Bluetooth negotiates a larger packet size).
+  const buf = useRef({ t: [] as number[], v: [] as number[], ax: [] as Nullable[], ay: [] as Nullable[], az: [] as Nullable[], last: 0, rawEma: 0 });
   // Current set accumulator (performance.now() ms, mV, g).
-  const rec = useRef({ start: 0, startIso: "", t: [] as number[], v: [] as number[], ax: [] as number[], ay: [] as number[], az: [] as number[], peak: 0, floor: Infinity, reps: 0, inRep: false, repStart: 0 });
+  const rec = useRef({ start: 0, startIso: "", t: [] as number[], v: [] as number[], ax: [] as Nullable[], ay: [] as Nullable[], az: [] as Nullable[], peak: 0, floor: Infinity, reps: 0, inRep: false, repStart: 0 });
   const emgPlot = useRef<uPlot | null>(null);
   const motionPlot = useRef<uPlot | null>(null);
 
@@ -153,11 +164,9 @@ export function LiveRecorder({
     b.t.push(ts);
     b.v.push(mv);
     const motion = s.ax != null && s.ay != null && s.az != null;
-    if (motion) {
-      b.ax.push(s.ax!);
-      b.ay.push(s.ay!);
-      b.az.push(s.az!);
-    }
+    b.ax.push(motion ? s.ax! : null);
+    b.ay.push(motion ? s.ay! : null);
+    b.az.push(motion ? s.az! : null);
     b.last = s.t;
     b.rawEma = b.rawEma ? 0.95 * b.rawEma + 0.05 * s.v : s.v;
     // Trim to the display window (+2 s margin) in batches.
@@ -170,11 +179,9 @@ export function LiveRecorder({
       const r = rec.current;
       r.t.push(s.t);
       r.v.push(mv);
-      if (motion) {
-        r.ax.push(s.ax!);
-        r.ay.push(s.ay!);
-        r.az.push(s.az!);
-      }
+      r.ax.push(motion ? s.ax! : null);
+      r.ay.push(motion ? s.ay! : null);
+      r.az.push(motion ? s.az! : null);
       // Live rep counter: hysteresis between the resting floor and the set peak.
       r.peak = Math.max(r.peak, mv);
       r.floor = Math.min(r.floor, mv);
@@ -217,7 +224,7 @@ export function LiveRecorder({
         emgPlot.current!.setData([b.t, b.v] as uPlot.AlignedData, false);
         emgPlot.current!.setScale("x", { min, max: tNow });
       });
-      if (motionPlot.current && b.ax.length === b.t.length) {
+      if (motionPlot.current) {
         motionPlot.current.batch(() => {
           motionPlot.current!.setData([b.t, b.ax, b.ay, b.az] as uPlot.AlignedData, false);
           motionPlot.current!.setScale("x", { min, max: tNow });
@@ -264,9 +271,10 @@ export function LiveRecorder({
       return;
     }
     const values = resampleUniform(r.t, r.v, SAVE_FS);
-    const motion =
-      r.ax.length === r.t.length && r.ax.some((x, i) => x !== 0 || r.ay[i] !== 0 || r.az[i] !== 0)
-        ? { x: resampleUniform(r.t, r.ax, SAVE_FS), y: resampleUniform(r.t, r.ay, SAVE_FS), z: resampleUniform(r.t, r.az, SAVE_FS) }
+    // Keep motion only if the accelerometer sent real (non-zero) values.
+    const hasRealMotion = r.ax.some((x, i) => x != null && (x !== 0 || r.ay[i] !== 0 || r.az[i] !== 0));
+    const motion = hasRealMotion
+        ? { x: resampleUniform(r.t, fillGaps(r.ax), SAVE_FS), y: resampleUniform(r.t, fillGaps(r.ay), SAVE_FS), z: resampleUniform(r.t, fillGaps(r.az), SAVE_FS) }
         : undefined;
     let peak = 0;
     for (const v of values) peak = Math.max(peak, v);
