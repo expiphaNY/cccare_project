@@ -37,6 +37,7 @@ import {
   type SensorConnection,
 } from "@/lib/ble";
 import { detectReps } from "@/lib/client-signal";
+import { EMG_HIGHPASS_HZ, EmgEnvelopeFilter, envelopeFromRaw } from "@/lib/emg-filter";
 import { DEMO, DEMO_MSG } from "@/lib/demo";
 import { VALUE_SCALES, myowareGain, type ChannelKey, type ValueScale } from "@/lib/types";
 import { Sparkline } from "./charts/Sparkline";
@@ -184,15 +185,17 @@ export function LiveRecorder({
     ax: [] as Nullable[],
     ay: [] as Nullable[],
     az: [] as Nullable[],
-    // Raw EMG: seconds since connect, mV (drift removed), |mV|.
+    // Raw EMG: seconds since connect, then 20 Hz high-passed mV, its rectified
+    // value and the envelope calculated from it (same filter as on save).
     rt: [] as number[],
     rv: [] as number[],
     rr: [] as number[],
+    re: [] as number[],
+    filter: null as EmgEnvelopeFilter | null,
     clip: [] as number[], // 1 where the envelope reading was at the ceiling
     last: 0,
     rawEma: 0,
     rawClock: 0, // performance.now() ms of the newest raw sample
-    rawDc: NaN, // slow running mean of the raw channel
     rawFs: 0,
   });
   const buf = useRef(emptyBuf());
@@ -246,6 +249,7 @@ export function LiveRecorder({
     // but never run more than 250 ms ahead of (or behind) the clock.
     const rawT: number[] = [];
     const rawV: number[] = [];
+    let rawEnv: Float32Array | null = null;
     if (s.raw?.length && s.rawFs) {
       const dt = 1000 / s.rawFs;
       const n = s.raw.length;
@@ -253,24 +257,25 @@ export function LiveRecorder({
       if (start > s.t + 250 || start < s.t - (n - 1) * dt - 250) start = s.t - (n - 1) * dt;
       const g = rawGainFor(st);
       const toMv = VALUE_SCALES[st.scale].toBoardMv;
-      // Drift removal: running mean with a ~2 s time constant.
-      const alpha = 1 / (2 * s.rawFs);
       for (let i = 0; i < n; i++) {
-        const m = toMv(s.raw[i]) / g;
-        b.rawDc = Number.isNaN(b.rawDc) ? m : b.rawDc + alpha * (m - b.rawDc);
-        const x = m - b.rawDc;
         const t = start + i * dt;
         rawT.push(t);
-        rawV.push(x);
+        rawV.push(toMv(s.raw[i]) / g); // unfiltered mV: the save route filters the whole set
         b.rt.push((t - t0.current) / 1000);
-        b.rv.push(x);
-        b.rr.push(Math.abs(x));
+      }
+      if (!b.filter || b.rawFs !== s.rawFs) b.filter = new EmgEnvelopeFilter(s.rawFs);
+      const f = b.filter.push(rawV);
+      rawEnv = f.envelope;
+      for (let i = 0; i < n; i++) {
+        b.rv.push(f.filtered[i]);
+        b.rr.push(f.rectified[i]);
+        b.re.push(f.envelope[i]);
       }
       b.rawClock = start + (n - 1) * dt;
       b.rawFs = s.rawFs;
       if (b.rt.length > 2048 && b.rt[0] < ts - MAX_WINDOW_S - 2) {
         const cut = b.rt.findIndex((x) => x >= ts - MAX_WINDOW_S);
-        for (const k of ["rt", "rv", "rr"] as const) b[k].splice(0, cut);
+        for (const k of ["rt", "rv", "rr", "re"] as const) b[k].splice(0, cut);
       }
     }
 
@@ -287,20 +292,26 @@ export function LiveRecorder({
       }
       if (clipped) r.clipped++;
       // Live rep counter: hysteresis between the resting floor and the set peak.
-      r.peak = Math.max(r.peak, mv);
-      r.floor = Math.min(r.floor, mv);
-      const span = r.peak - r.floor;
-      if (r.peak > 0 && span > r.peak * 0.25) {
-        const on = r.floor + span * 0.35;
-        const off = r.floor + span * 0.2;
-        if (!r.inRep && mv > on) {
-          r.inRep = true;
-          r.repStart = s.t;
-        } else if (r.inRep && mv < off) {
-          r.inRep = false;
-          if (s.t - r.repStart > 300) r.reps++;
+      // Once raw EMG is streaming, it follows the envelope calculated from raw
+      // (packets without raw are skipped so the two scales never mix).
+      const track = (e: number, t: number) => {
+        r.peak = Math.max(r.peak, e);
+        r.floor = Math.min(r.floor, e);
+        const span = r.peak - r.floor;
+        if (r.peak > 0 && span > r.peak * 0.25) {
+          const on = r.floor + span * 0.35;
+          const off = r.floor + span * 0.2;
+          if (!r.inRep && e > on) {
+            r.inRep = true;
+            r.repStart = t;
+          } else if (r.inRep && e < off) {
+            r.inRep = false;
+            if (t - r.repStart > 300) r.reps++;
+          }
         }
-      }
+      };
+      if (rawEnv) for (let i = 0; i < rawEnv.length; i++) track(rawEnv[i], rawT[i]);
+      else if (!b.rawFs) track(mv, s.t);
     }
   }, []);
 
@@ -327,7 +338,7 @@ export function LiveRecorder({
       const min = tNow - windowRef.current;
       const view = viewRef.current;
       emgPlot.current?.batch(() => {
-        const d = view === "raw" ? [b.rt, b.rv] : view === "rectified" ? [b.rt, b.rr] : [b.t, b.v];
+        const d = view === "raw" ? [b.rt, b.rv] : view === "rectified" ? [b.rt, b.rr] : b.rawFs ? [b.rt, b.re] : [b.t, b.v];
         emgPlot.current!.setData(d as uPlot.AlignedData, false);
         emgPlot.current!.setScale("x", { min, max: tNow });
       });
@@ -342,14 +353,17 @@ export function LiveRecorder({
         const n = b.t.length;
         let k = n - 1;
         while (k > 0 && b.t[k - 1] > tNow - 1) k--;
-        const recent = n ? b.v.slice(Math.max(0, n - 6)) : [];
+        // Envelope shown in the numbers: calculated from raw when it streams.
+        const et = b.rawFs ? b.rt : b.t;
+        const ev = b.rawFs ? b.re : b.v;
+        const recent = ev.slice(Math.max(0, ev.length - (b.rawFs ? Math.round(b.rawFs / 10) : 6)));
         const r = rec.current;
         let max = 0;
         let clips = 0;
         let lastSec = 0;
-        for (let i = 0; i < n; i++) {
-          if (b.t[i] < tNow - windowRef.current) continue;
-          if (b.v[i] > max) max = b.v[i];
+        for (let i = 0; i < ev.length; i++) {
+          if (et[i] < tNow - windowRef.current) continue;
+          if (ev[i] > max) max = ev[i];
         }
         for (let i = n - 1; i >= 0 && b.t[i] > tNow - 2; i--) {
           clips += b.clip[i];
@@ -393,20 +407,27 @@ export function LiveRecorder({
     const rawFs = buf.current.rawFs;
     const withRaw = rawFs > 0 && r.rt.length > rawFs * MIN_SET_S * 0.5;
     const fs = withRaw ? rawFs : SAVE_FS;
-    const grid = { start: r.t[0], n: Math.max(2, Math.floor(dur * fs) + 1) };
+    // With raw, the grid is the raw samples' own clock, so each raw sample is
+    // kept exactly (nearest only matters across a dropped packet); the slow
+    // channels are interpolated onto it.
+    const grid = withRaw
+      ? { start: r.rt[0], n: Math.max(2, Math.round((r.rt[r.rt.length - 1] - r.rt[0]) / (1000 / fs)) + 1) }
+      : { start: r.t[0], n: Math.max(2, Math.floor(dur * fs) + 1) };
     const values = resampleUniform(r.t, r.v, fs, grid);
-    const raw = withRaw ? resampleUniform(r.rt, r.rv, fs, grid) : undefined;
+    const raw = withRaw ? resampleUniform(r.rt, r.rv, fs, grid, "nearest") : undefined;
     // Keep motion only if the accelerometer sent real (non-zero) values.
     const hasRealMotion = r.ax.some((x, i) => x != null && (x !== 0 || r.ay[i] !== 0 || r.az[i] !== 0));
     const motion = hasRealMotion
         ? { x: resampleUniform(r.t, fillGaps(r.ax), fs, grid), y: resampleUniform(r.t, fillGaps(r.ay), fs, grid), z: resampleUniform(r.t, fillGaps(r.az), fs, grid) }
         : undefined;
+    // Same calculation the save route runs, so this summary matches the saved set.
+    const env = raw ? envelopeFromRaw(raw, fs).envelope : values;
     let peak = 0;
-    for (const v of values) peak = Math.max(peak, v);
-    const reps = settingsRef.current.stream === "envelope" ? detectReps(values, fs).length : r.reps;
-    const step = Math.max(1, Math.floor(values.length / 60));
+    for (const v of env) peak = Math.max(peak, v);
+    const reps = raw || settingsRef.current.stream === "envelope" ? detectReps(env, fs).length : r.reps;
+    const step = Math.max(1, Math.floor(env.length / 60));
     const preview: number[] = [];
-    for (let i = 0; i < values.length; i += step) preview.push(values[i]);
+    for (let i = 0; i < env.length; i += step) preview.push(env[i]);
     setSets((s) => [
       ...s,
       {
@@ -630,7 +651,7 @@ export function LiveRecorder({
         draw: [
           (u: uPlot) => {
             // The sensor's ceiling: readings can't go above this line.
-            if (viewRef.current !== "envelope") return;
+            if (viewRef.current !== "envelope" || buf.current.rawFs) return;
             const c = ceilingMv(settingsRef.current);
             const yMax = u.scales.y.max ?? 0;
             if (c == null || c > yMax) return;
@@ -819,7 +840,7 @@ export function LiveRecorder({
           <Card className={cx("transition-shadow", recording && "ring-2 ring-bad/30")}>
             <div className="flex flex-wrap items-start gap-6 px-5 pt-5 sm:px-6">
               <div className="min-w-[170px]">
-                <div className="eyebrow">{plain ? "Muscle effort now" : `Live ${settings.stream}`}</div>
+                <div className="eyebrow">{plain ? "Muscle effort now" : hasRaw ? `Live envelope (from raw, ${EMG_HIGHPASS_HZ} Hz high-pass)` : `Live ${settings.stream}`}</div>
                 <div className="mt-1 flex items-baseline gap-1.5">
                   <span className="display tabular text-[44px] font-semibold leading-none">{fmtMv(readout.value)}</span>
                   <span className="text-ink-2">mV</span>
@@ -842,13 +863,13 @@ export function LiveRecorder({
               </dl>
             </div>
 
-            {!readout.stale && readout.clipPct > 5 && !(settings.scale === "adc12" && readout.rawLevel > 3800) && (
+            {!readout.stale && !hasRaw && readout.clipPct > 5 && !(settings.scale === "adc12" && readout.rawLevel > 3800) && (
               <div className="mx-5 mt-4 flex items-start gap-2 rounded-xl bg-warn-soft px-3 py-2.5 text-[13px] text-warn sm:mx-6" role="status">
                 <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
                 <p>
                   {plain
                     ? "Your muscle signal is going off the top of the sensor’s scale, so the strongest part is being cut off. Ask your clinician to turn the sensor’s gain knob down a little."
-                    : `The envelope is hitting the sensor’s maximum (${fmtMv(ceilingMv(settings) ?? 0)} mV at a ${settings.gainKnobK} kΩ gain setting), so peaks are cut off. Turn the MyoWare gain knob down until a full contraction stays below the dashed line, then update “Gain knob” in Advanced sensor settings.${hasRaw ? " The raw and rectified channels have a fixed 200× gain and are not affected." : ""}`}
+                    : `The envelope is hitting the sensor’s maximum (${fmtMv(ceilingMv(settings) ?? 0)} mV at a ${settings.gainKnobK} kΩ gain setting), so peaks are cut off. Turn the MyoWare gain knob down until a full contraction stays below the dashed line, then update “Gain knob” in Advanced sensor settings.`}
                 </p>
               </div>
             )}
@@ -977,7 +998,7 @@ export function LiveRecorder({
                     <b className="tabular">{fmtMv(s.peak)} mV</b>
                   </span>
                 </div>
-                {s.clippedPct >= 2 && (
+                {s.clippedPct >= 2 && !s.raw && (
                   <Badge tone="warn">
                     <span title="Share of readings at the sensor’s maximum">{s.clippedPct}% at max</span>
                   </Badge>

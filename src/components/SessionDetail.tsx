@@ -226,7 +226,7 @@ export function SessionDetail({
                 {selected.source === "synthetic"
                   ? "synthetic generator (seeded)"
                   : selected.source === "ble"
-                    ? `${selected.capture?.transport === "demo" ? "simulated demo sensor, recorded live" : "live Bluetooth recording"} from ${selected.deviceId}${selected.capture ? ` (${selected.capture.observedRateHz} Hz received, resampled to ${selected.sampleRateHz} Hz${selected.capture.rawStreamed ? "; raw EMG streamed, rectified and envelope derived from it" : ""}${selected.capture.clippedPct ? `; sensor envelope at its maximum ${selected.capture.clippedPct}% of the time` : ""})` : ""}`
+                    ? `${selected.capture?.transport === "demo" ? "simulated demo sensor, recorded live" : "live Bluetooth recording"} from ${selected.deviceId}${selected.capture ? ` (${selected.capture.observedRateHz} Hz received, resampled to ${selected.sampleRateHz} Hz${selected.capture.rawStreamed ? `; raw EMG streamed${selected.capture.highpassHz ? ` and ${selected.capture.highpassHz} Hz high-passed` : ""}, rectified and envelope derived from it` : ""}${selected.capture.clippedPct ? `; sensor envelope at its maximum ${selected.capture.clippedPct}% of the time` : ""})` : ""}`
                     : `device ${selected.deviceId}`} · units {selected.units} ·
                 recording id <span className="font-mono">{selected.id}</span>
               </p>

@@ -169,6 +169,8 @@ export interface LiveCapture {
   clippedPct?: number;
   /** True when raw EMG was streamed; rectified and envelope were then derived from it. */
   rawStreamed?: boolean;
+  /** High-pass applied to the raw channel before rectifying (Hz). */
+  highpassHz?: number;
 }
 
 /** How numbers from the board map to millivolts at the electrodes. */

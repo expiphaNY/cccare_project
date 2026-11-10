@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { authorize } from "@/lib/access";
 import { logAccess } from "@/lib/data";
+import { EMG_HIGHPASS_HZ, envelopeFromRaw } from "@/lib/emg-filter";
 import { analyzeSignal, deriveChannels } from "@/lib/signal";
 import { getStore } from "@/lib/store";
 import type { ChannelKey, ExerciseKey, LiveCapture, MotionData, Recording, Session, SignalData, ValueScale } from "@/lib/types";
@@ -81,12 +82,9 @@ export async function POST(req: Request) {
     const rawBatch = num(s.raw);
     if (rawBatch && rawBatch.length === values.length) {
       // Raw EMG streamed next to the envelope (fixed 200× gain, so it isn't cut
-      // off when the envelope clips). Derive rectified + envelope from it, the
-      // same way /api/ingest and the seed data do, so metrics stay comparable.
-      const r = Float32Array.from(rawBatch);
-      const mean = r.reduce((a, b) => a + b, 0) / r.length;
-      raw = r.map((x) => x - mean);
-      ({ rectified, envelope } = deriveChannels(raw, fs));
+      // off when the envelope clips). 20 Hz high-pass (movement artefact), then
+      // rectify + smooth: the same filter the live view runs.
+      ({ filtered: raw, rectified, envelope } = envelopeFromRaw(rawBatch, fs));
       channels = ["raw", "rectified", "envelope"];
     } else if (stream === "raw") {
       // Raw output is centred on mid-supply; remove the DC offset.
@@ -118,7 +116,7 @@ export async function POST(req: Request) {
       scale,
       gain: Math.max(1, Number(body.gain) || 1),
       ...(Number.isFinite(Number(s.clippedPct)) && { clippedPct: Math.min(100, Math.max(0, Math.round(Number(s.clippedPct) * 10) / 10)) }),
-      ...(channels.includes("raw") && rawBatch && { rawStreamed: true }),
+      ...(channels.includes("raw") && rawBatch && { rawStreamed: true, highpassHz: EMG_HIGHPASS_HZ }),
     };
     parsed.push({
       rec: {

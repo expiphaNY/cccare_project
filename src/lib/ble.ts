@@ -636,7 +636,15 @@ export function connectDemo(o: Pick<ConnectOptions, "onSample" | "onDisconnect">
  * Resamples irregular BLE samples onto a uniform grid (linear interpolation),
  * so the server's analysis and the charts can treat them like any other set.
  */
-export function resampleUniform(t: number[], v: number[], fs: number, grid?: { start: number; n: number }): Float32Array {
+export function resampleUniform(
+  t: number[],
+  v: number[],
+  fs: number,
+  grid?: { start: number; n: number },
+  /** "nearest" picks real samples instead of blending neighbours. Use it for raw
+   * EMG: linear interpolation acts as a low-pass and shrinks fast activity. */
+  mode: "linear" | "nearest" = "linear",
+): Float32Array {
   if (t.length < 2) return grid ? new Float32Array(grid.n).fill(v[0] ?? 0) : Float32Array.from(v);
   const dur = (t[t.length - 1] - t[0]) / 1000;
   const n = grid?.n ?? Math.max(2, Math.floor(dur * fs) + 1);
@@ -648,7 +656,7 @@ export function resampleUniform(t: number[], v: number[], fs: number, grid?: { s
     while (j < t.length - 2 && t[j + 1] < ti) j++;
     const span = t[j + 1] - t[j];
     const a = span > 0 ? Math.min(1, Math.max(0, (ti - t[j]) / span)) : 0;
-    out[i] = v[j] + (v[j + 1] - v[j]) * a;
+    out[i] = mode === "nearest" ? (a < 0.5 ? v[j] : v[j + 1]) : v[j] + (v[j + 1] - v[j]) * a;
   }
   return out;
 }
