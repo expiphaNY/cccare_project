@@ -39,10 +39,16 @@ export async function GET(req: Request, ctx: RouteContext<"/api/export/[format]"
     if (!sig) return Response.json({ error: "Signal unavailable" }, { status: 404 });
     const lines = [
       `# patient_id=${rec.patientId},recording_id=${rec.id},exercise=${EXERCISES[rec.exercise].name},muscle=${rec.muscle},side=${rec.side},set=${rec.setNumber},recorded_at=${rec.recordedAt},fs_hz=${sig.sampleRateHz},units=mV,source=${rec.source}`,
-      "sample,t_s,raw_mV,rectified_mV,envelope_mV",
+      `sample,t_s,raw_mV,rectified_mV,envelope_mV${sig.motion ? ",accel_x_g,accel_y_g,accel_z_g" : ""}`,
     ];
-    for (let i = 0; i < sig.raw.length; i++)
-      lines.push(`${i},${(i / sig.sampleRateHz).toFixed(4)},${sig.raw[i].toFixed(6)},${sig.rectified[i].toFixed(6)},${sig.envelope[i].toFixed(6)}`);
+    const cell = (a: Float32Array, i: number) => (a.length ? a[i].toFixed(6) : "");
+    const m = sig.motion;
+    for (let i = 0; i < sig.envelope.length; i++)
+      lines.push(
+        `${i},${(i / sig.sampleRateHz).toFixed(4)},${cell(sig.raw, i)},${cell(sig.rectified, i)},${sig.envelope[i].toFixed(6)}${
+          m ? `,${m.x[i].toFixed(4)},${m.y[i].toFixed(4)},${m.z[i].toFixed(4)}` : ""
+        }`,
+      );
     await logAccess(rec.patientId, grant.actor, "export_csv", `Downloaded raw samples for ${EXERCISES[rec.exercise].name}, set ${rec.setNumber} (${fmtDate(rec.recordedAt)}).`);
     return new Response(lines.join("\n"), {
       headers: { ...headers, "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${rec.id}.csv"` },

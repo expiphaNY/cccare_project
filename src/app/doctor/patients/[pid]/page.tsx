@@ -1,3 +1,4 @@
+import { metricAvailable } from "@/lib/analytics";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, Home, MapPin, NotebookPen } from "lucide-react";
@@ -115,7 +116,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
                   <span>Peak per rep</span>
                   <span>
                     Fatigue <b className="text-ink tabular">{latestBest.metrics.fatigueIndex.toFixed(0)}%</b> · MDF{" "}
-                    <b className="text-ink tabular">{latestBest.metrics.medianFreqHz.toFixed(0)} Hz</b>
+                    <b className="text-ink tabular">{metricAvailable(latestBest, "medianFreqHz") ? `${latestBest.metrics.medianFreqHz.toFixed(0)} Hz` : "–"}</b>
                   </span>
                 </div>
               </div>

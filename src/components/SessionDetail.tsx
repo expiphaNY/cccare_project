@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Download, Home, MapPin } from "lucide-react";
-import { METRICS, type MetricKey } from "@/lib/analytics";
+import { METRICS, metricAvailable, type MetricKey } from "@/lib/analytics";
 import { clinicianById } from "@/lib/data";
 import { fmtDate, fmtTime } from "@/lib/format";
 import type { Patient, Recording, Session, SignalData } from "@/lib/types";
@@ -44,7 +44,7 @@ export function SessionDetail({
   const prevRecs = prev ? recordings.filter((r) => r.sessionId === prev.id && r.exercise === selected?.exercise) : [];
   const prevBest = prevRecs.length ? Math.max(...prevRecs.map((r) => r.metrics.peakEnvelope)) : null;
   const clin = clinicianById(session.clinicianId);
-  const metricKeys: MetricKey[] = plain ? ["peakEnvelope", "meanEnvelope", "fatigueIndex"] : ["peakEnvelope", "meanEnvelope", "rms", "iemg", "medianFreqHz", "fatigueIndex"];
+  const metricKeys: MetricKey[] = plain ? ["peakEnvelope", "meanEnvelope", "fatigueIndex"] : (["peakEnvelope", "meanEnvelope", "rms", "iemg", "medianFreqHz", "fatigueIndex"] as MetricKey[]).filter((k) => !selected || metricAvailable(selected, k));
 
   return (
     <div className="space-y-6">
@@ -62,7 +62,7 @@ export function SessionDetail({
             {session.painScore != null && <Badge tone={session.painScore >= 5 ? "warn" : "neutral"}>Pain {session.painScore}/10</Badge>}
           </div>
           <p className="mt-1 text-sm text-ink-2">
-            Started {fmtTime(session.startedAt)} · {recs.length} sets recorded by {patient.device.id}
+            Started {fmtTime(session.startedAt)} · {recs.length} set{recs.length === 1 ? "" : "s"} recorded by {recs[0]?.source === "ble" ? recs[0].deviceId : patient.device.id}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -168,7 +168,7 @@ export function SessionDetail({
               <CardHeader title={plain ? "Each repetition" : "Per-rep peak"} subtitle={plain ? "Did your effort hold up to the end?" : "Envelope maximum per contraction"} />
               <div className="px-5 pb-5 pt-4 sm:px-6">
                 <RepBars values={selected.metrics.repPeaks} height={88} />
-                {!plain && selected.metrics.repMedianFreq.length > 0 && (
+                {!plain && selected.metrics.repMedianFreq.length > 0 && metricAvailable(selected, "medianFreqHz") && (
                   <p className="mt-3 text-[12px] text-ink-2">
                     MDF per rep (Hz): <span className="tabular text-ink">{selected.metrics.repMedianFreq.map((f) => f.toFixed(0)).join(" · ")}</span>
                   </p>
@@ -182,7 +182,7 @@ export function SessionDetail({
               <CardHeader
                 eyebrow="Lowest level"
                 title="Raw samples"
-                subtitle={`${rawPreview.envelope.length.toLocaleString()} samples × 3 channels. First 40 shown.`}
+                subtitle={`${rawPreview.envelope.length.toLocaleString()} samples × ${rawPreview.raw.length ? "3 channels" : "envelope only"}${rawPreview.motion ? " + accelerometer" : ""}. First 40 shown.`}
                 action={
                   <a href={`/api/export/csv?rid=${selected.id}&${access}`} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-line-strong px-3 text-[13px] font-medium text-brand hover:bg-brand-tint">
                     <Download className="size-3.5" aria-hidden /> Download CSV
@@ -205,8 +205,8 @@ export function SessionDetail({
                       <tr key={i} className="border-t border-line/70">
                         <td className="px-5 py-1 text-ink-3 sm:px-6">{i}</td>
                         <td className="px-3 py-1">{(i / rawPreview.sampleRateHz).toFixed(3)}</td>
-                        <td className="px-3 py-1 text-right">{rawPreview.raw[i].toFixed(5)}</td>
-                        <td className="px-3 py-1 text-right">{rawPreview.rectified[i].toFixed(5)}</td>
+                        <td className="px-3 py-1 text-right">{rawPreview.raw.length ? rawPreview.raw[i].toFixed(5) : "–"}</td>
+                        <td className="px-3 py-1 text-right">{rawPreview.rectified.length ? rawPreview.rectified[i].toFixed(5) : "–"}</td>
                         <td className="px-5 py-1 text-right sm:px-6">{rawPreview.envelope[i].toFixed(5)}</td>
                       </tr>
                     ))}
@@ -214,7 +214,12 @@ export function SessionDetail({
                 </table>
               </div>
               <p className="border-t border-line px-5 py-3 text-[12px] text-ink-3 sm:px-6">
-                Source: {selected.source === "synthetic" ? "synthetic generator (seeded)" : `device ${selected.deviceId}`} · units {selected.units} ·
+                Source:{" "}
+                {selected.source === "synthetic"
+                  ? "synthetic generator (seeded)"
+                  : selected.source === "ble"
+                    ? `${selected.capture?.transport === "demo" ? "simulated demo sensor, recorded live" : "live Bluetooth recording"} from ${selected.deviceId}${selected.capture ? ` (${selected.capture.observedRateHz} Hz received, resampled to ${selected.sampleRateHz} Hz)` : ""}`
+                    : `device ${selected.deviceId}`} · units {selected.units} ·
                 recording id <span className="font-mono">{selected.id}</span>
               </p>
             </Card>

@@ -1,7 +1,7 @@
 import { authorize, shouldLog } from "@/lib/access";
 import { logAccess } from "@/lib/data";
 import { getStore } from "@/lib/store";
-import { EXERCISES } from "@/lib/types";
+import { EXERCISES, measuredChannels } from "@/lib/types";
 import { fmtDate } from "@/lib/format";
 
 const b64 = (a: Float32Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString("base64");
@@ -42,9 +42,11 @@ export async function GET(req: Request, ctx: RouteContext<"/api/signal/[rid]">) 
       fs: sig.sampleRateHz,
       n: sig.envelope.length,
       units: rec.units,
+      channels: measuredChannels(rec),
       envelope: b64(sig.envelope),
-      rectified: grant.includeRaw ? b64(sig.rectified) : null,
-      raw: grant.includeRaw ? b64(sig.raw) : null,
+      rectified: grant.includeRaw && sig.rectified.length ? b64(sig.rectified) : null,
+      raw: grant.includeRaw && sig.raw.length ? b64(sig.raw) : null,
+      motion: sig.motion ? { x: b64(sig.motion.x), y: b64(sig.motion.y), z: b64(sig.motion.z) } : null,
     },
     { headers: { "Cache-Control": "private, no-store" } },
   );

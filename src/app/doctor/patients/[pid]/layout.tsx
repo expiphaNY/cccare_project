@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { Cpu, Download, Layers, ShieldCheck } from "lucide-react";
+import { Activity, Cpu, Download, Layers, ShieldCheck } from "lucide-react";
 import { PatientRecordTabs } from "@/components/nav";
 import { ShareDialog } from "@/components/ShareDialog";
 import { ExportLinks } from "@/components/privacy";
@@ -56,6 +56,9 @@ async function RecordHeader({ params }: { params: Promise<{ pid: string }> }) {
           </p>
         </div>
         <div className="no-print flex flex-wrap items-center gap-2">
+          <Link href={`/doctor/patients/${pid}/record`} className={btn.primary}>
+            <Activity className="size-4" aria-hidden /> New measurement
+          </Link>
           <Link href={`/doctor/patients/${pid}/compare`} className={btn.secondary}>
             <Layers className="size-4" aria-hidden /> Compare
           </Link>

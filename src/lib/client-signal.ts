@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { ChannelKey } from "./types";
 
 export interface ClientSignal {
   id: string;
@@ -9,6 +10,10 @@ export interface ClientSignal {
   envelope: Float32Array;
   rectified: Float32Array | null;
   raw: Float32Array | null;
+  /** Channels the sensor measured (not the same as what this viewer may see). */
+  channels: ChannelKey[];
+  /** Accelerometer x/y/z in g, when captured. */
+  motion: { x: Float32Array; y: Float32Array; z: Float32Array } | null;
 }
 
 const cache = new Map<string, Promise<ClientSignal>>();
@@ -35,6 +40,8 @@ export function fetchSignal(id: string, access: string, ctx?: "compare"): Promis
         envelope: decode(j.envelope)!,
         rectified: decode(j.rectified),
         raw: decode(j.raw),
+        channels: j.channels ?? ["raw", "rectified", "envelope"],
+        motion: j.motion ? { x: decode(j.motion.x)!, y: decode(j.motion.y)!, z: decode(j.motion.z)! } : null,
       };
     });
     p.catch(() => cache.delete(key));

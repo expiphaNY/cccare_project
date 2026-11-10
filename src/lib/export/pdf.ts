@@ -1,7 +1,7 @@
 // PDF report built with pdf-lib (pure JS, no headless browser needed).
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
-import { summarize } from "../analytics";
+import { metricAvailable, summarize } from "../analytics";
 import type { PatientBundle } from "../data";
 import { clinicianById } from "../data";
 import { ageFrom, fmtDate, fmtDateTime, fmtTime, fullName } from "../format";
@@ -292,7 +292,7 @@ export async function buildPdf(
       String(r.metrics.repsDetected),
       r.metrics.peakEnvelope.toFixed(3),
       r.metrics.meanEnvelope.toFixed(3),
-      r.metrics.medianFreqHz.toFixed(0),
+      metricAvailable(r, "medianFreqHz") ? r.metrics.medianFreqHz.toFixed(0) : "–",
       `${r.metrics.fatigueIndex.toFixed(0)}%`,
     ]);
   w.table(

@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
+import { StoreWarning } from "@/components/StoreWarning";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -14,7 +16,12 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full">
-      <body className="min-h-full flex flex-col text-ink">{children}</body>
+      <body className="min-h-full flex flex-col text-ink">
+        <Suspense fallback={null}>
+          <StoreWarning />
+        </Suspense>
+        {children}
+      </body>
     </html>
   );
 }

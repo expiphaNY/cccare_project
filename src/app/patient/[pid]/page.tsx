@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowRight, CalendarCheck, Eye, Flag, HeartPulse, Layers, MessageSquareText, ShieldCheck } from "lucide-react";
+import { Activity, ArrowRight, CalendarCheck, Eye, Flag, HeartPulse, Layers, MessageSquareText, ShieldCheck } from "lucide-react";
 import { ExerciseCards } from "@/components/ExerciseCards";
 import { TrendPanel } from "@/components/charts/TrendPanel";
 import { WhoCanSee } from "@/components/transparency";
@@ -59,7 +59,10 @@ export default async function PatientHome({ params }: PageProps<"/patient/[pid]"
         <h1 className="display mt-2 max-w-2xl text-[34px] font-semibold sm:text-[46px]">{headline.big}</h1>
         <p className="mt-3 max-w-xl text-[16px] leading-relaxed text-white/90">{headline.small}</p>
         <div className="mt-6 flex flex-wrap gap-2">
-          <Link href={`${base}/compare`} className="pressable inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white px-4 text-sm font-semibold text-brand hover:bg-white/90">
+          <Link href={`${base}/record`} className="pressable inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white px-4 text-sm font-semibold text-brand hover:bg-white/90">
+            <Activity className="size-4" aria-hidden /> Start new measurement
+          </Link>
+          <Link href={`${base}/compare`} className="pressable inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white/15 px-4 text-sm font-medium text-white hover:bg-white/25">
             <Layers className="size-4" aria-hidden /> See start vs now
           </Link>
           <Link href={`${base}/sessions`} className="pressable inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white/15 px-4 text-sm font-medium text-white hover:bg-white/25">

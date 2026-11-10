@@ -2,6 +2,7 @@
 // dashboards. Safe to import from client components.
 
 import type { ExerciseKey, Metrics, Recording, Session } from "./types";
+import { measuredChannels } from "./types";
 
 export type MetricKey = "peakEnvelope" | "meanEnvelope" | "rms" | "iemg" | "medianFreqHz" | "fatigueIndex";
 
@@ -59,6 +60,16 @@ export const METRICS: Record<
   },
 };
 
+/**
+ * RMS and median frequency need the raw EMG at a high sample rate. Envelope-only
+ * recordings (e.g. MyoWare over Bluetooth) can't produce them.
+ */
+export function metricAvailable(r: Pick<Recording, "channels" | "sampleRateHz">, m: MetricKey) {
+  if (m === "rms") return measuredChannels(r).includes("raw");
+  if (m === "medianFreqHz") return measuredChannels(r).includes("raw") && r.sampleRateHz >= 200;
+  return true;
+}
+
 export interface SessionPoint {
   sessionId: string;
   date: string;
@@ -70,7 +81,7 @@ export interface SessionPoint {
 export function trendFor(recs: Recording[], exercise: ExerciseKey, metric: MetricKey): SessionPoint[] {
   const bySession = new Map<string, Recording[]>();
   for (const r of recs) {
-    if (r.exercise !== exercise) continue;
+    if (r.exercise !== exercise || !metricAvailable(r, metric)) continue;
     const list = bySession.get(r.sessionId) ?? [];
     list.push(r);
     bySession.set(r.sessionId, list);

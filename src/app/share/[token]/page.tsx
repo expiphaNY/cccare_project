@@ -1,3 +1,4 @@
+import { metricAvailable } from "@/lib/analytics";
 import type { Metadata } from "next";
 import { Clock, Eye, Link2Off, ShieldCheck } from "lucide-react";
 import { CompareTool } from "@/components/CompareTool";
@@ -148,7 +149,7 @@ export default async function SharedRecord({ params }: PageProps<"/share/[token]
                     <td className="px-3 py-2 text-right tabular">{r.setNumber}</td>
                     <td className="px-3 py-2 text-right tabular">{r.metrics.peakEnvelope.toFixed(3)} mV</td>
                     <td className="px-3 py-2 text-right tabular">{r.metrics.meanEnvelope.toFixed(3)} mV</td>
-                    <td className="px-5 py-2 text-right tabular sm:px-6">{r.metrics.medianFreqHz.toFixed(0)} Hz</td>
+                    <td className="px-5 py-2 text-right tabular sm:px-6">{metricAvailable(r, "medianFreqHz") ? `${r.metrics.medianFreqHz.toFixed(0)} Hz` : "–"}</td>
                   </tr>
                 ))}
               </tbody>

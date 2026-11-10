@@ -29,23 +29,37 @@ export function SignalViewer({
   const [range, setRange] = useState<[number, number] | null>(null);
 
   const hasRaw = !!data?.raw;
+  // Envelope-only sensors (e.g. MyoWare over Bluetooth) never measured raw/rectified.
+  const measured = data?.channels ?? (["envelope", "rectified", "raw"] as ChannelKey[]);
+  const envelopeOnly = !measured.includes("raw") && !measured.includes("rectified");
   const reps = useMemo(() => (data ? detectReps(data.envelope, data.fs) : []), [data]);
-  const views: { value: View; label: string }[] = [
-    { value: "envelope", label: audience === "patient" ? "Effort (envelope)" : "Envelope" },
-    { value: "rectified", label: "Rectified" },
-    { value: "raw", label: audience === "patient" ? "Raw signal" : "Raw EMG" },
-    { value: "all", label: "All three" },
-  ];
+  const views: { value: View; label: string }[] = (
+    [
+      { value: "envelope", label: audience === "patient" ? "Effort (envelope)" : "Envelope" },
+      { value: "rectified", label: "Rectified" },
+      { value: "raw", label: audience === "patient" ? "Raw signal" : "Raw EMG" },
+      { value: "all", label: "All three" },
+    ] as { value: View; label: string }[]
+  ).filter((v) => (v.value === "all" ? !envelopeOnly : measured.includes(v.value)));
 
   const plain = audience !== "clinician";
-  const channelsShown: ChannelKey[] = view === "all" ? ["envelope", "rectified", "raw"] : [view];
+  const effectiveView: View = envelopeOnly ? "envelope" : view;
+  const channelsShown: ChannelKey[] = effectiveView === "all" ? ["envelope", "rectified", "raw"] : [effectiveView];
   const locked = !hasRaw && channelsShown.some((c) => c !== "envelope");
 
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 px-5 pb-3 sm:px-6">
         {title && <h3 className="mr-2 text-[15px] font-semibold">{title}</h3>}
-        <Segmented label="Signal channel" value={view} onChange={setView} options={views} size="sm" />
+        {views.length > 1 ? (
+          <Segmented label="Signal channel" value={effectiveView} onChange={setView} options={views} size="sm" />
+        ) : (
+          envelopeOnly && (
+            <span className="text-[12px] text-ink-3">
+              {plain ? "This sensor sends the effort line only." : "Envelope only: this sensor did not stream raw or rectified EMG."}
+            </span>
+          )
+        )}
         <div className="ml-auto flex items-center gap-1.5">
           {range ? (
             <button type="button" className={cx(btn.ghost, btn.small)} onClick={() => setRange(null)}>
@@ -93,6 +107,7 @@ export function SignalViewer({
         {data && !locked && (
           <StackedCharts data={data} channels={channelsShown} range={range} setRange={setRange} reps={reps} />
         )}
+        {data?.motion && <MotionChart data={data} motion={data.motion} plain={plain} />}
       </div>
 
       <div className="grid gap-3 px-5 pb-5 pt-2 sm:px-6 md:grid-cols-3">
@@ -210,7 +225,7 @@ function ChannelChart({
       scales: { x: { time: false } },
       axes: [
         { ...AXIS, show: showXAxis, values: (_u, v) => v.map((s) => `${s.toFixed(s < 10 ? 1 : 0)} s`) },
-        { ...AXIS, size: 56, values: (_u, v) => v.map((n) => n.toFixed(2)), label: label ? `${label} (mV)` : "mV", labelSize: 16, labelFont: AXIS.font },
+        { ...AXIS, size: 56, values: (_u, v) => v.map((n) => n.toFixed(Math.abs(n) >= 100 ? 0 : 2)), label: label ? `${label} (mV)` : "mV", labelSize: 16, labelFont: AXIS.font },
       ],
       series: [
         {},
@@ -270,5 +285,49 @@ function ChannelChart({
       onCreate={onCreate}
       ariaLabel={`${CHANNELS[ch].label} signal over time`}
     />
+  );
+}
+
+const MOTION_COLORS = ["#2a78d6", "#eb6834", "#1baf7a"];
+
+/** Accelerometer x/y/z (g) recorded alongside the EMG, on the same time axis. */
+function MotionChart({ data, motion, plain }: { data: ClientSignal; motion: NonNullable<ClientSignal["motion"]>; plain: boolean }) {
+  const aligned = useMemo(() => {
+    const x = new Float64Array(motion.x.length);
+    for (let i = 0; i < x.length; i++) x[i] = i / data.fs;
+    return [x, motion.x, motion.y, motion.z] as unknown as uPlot.AlignedData;
+  }, [data.fs, motion]);
+  const options = useMemo<Omit<uPlot.Options, "width" | "height">>(
+    () => ({
+      padding: [8, 12, 0, 0],
+      cursor: { sync: { key: `sig-${data.id}`, setSeries: false }, points: { show: false }, y: false, drag: { x: false, y: false } },
+      scales: { x: { time: false } },
+      axes: [
+        { ...AXIS, values: (_u, v) => v.map((s) => `${s.toFixed(s < 10 ? 1 : 0)} s`) },
+        { ...AXIS, size: 56, values: (_u, v) => v.map((n) => n.toFixed(1)), label: "Motion (g)", labelSize: 16, labelFont: AXIS.font },
+      ],
+      series: [{}, ...["X", "Y", "Z"].map((l, i) => ({ label: l, stroke: MOTION_COLORS[i], width: 1.5, points: { show: false } }))],
+      legend: { show: false },
+    }),
+    [data.id],
+  );
+  const tooltip = useMemo(
+    () => (u: uPlot, idx: number) =>
+      `<div style="color:#5c6b82">${(u.data[0][idx] as number).toFixed(2)} s</div>` +
+      ["X", "Y", "Z"].map((l, i) => `<div><span style="color:${MOTION_COLORS[i]}">●</span> ${l} <b>${fmtNum(u.data[i + 1][idx] as number, 2)} g</b></div>`).join(""),
+    [],
+  );
+  return (
+    <div className="mt-3">
+      <div className="flex flex-wrap items-center gap-3 px-3 pb-1 text-[12px] text-ink-2">
+        <span className="font-medium text-ink">{plain ? "Arm movement" : "Accelerometer"}</span>
+        {["X", "Y", "Z"].map((l, i) => (
+          <span key={l} className="inline-flex items-center gap-1">
+            <span className="inline-block h-0.5 w-3 rounded" style={{ background: MOTION_COLORS[i] }} aria-hidden /> {l}
+          </span>
+        ))}
+      </div>
+      <UChart options={options} data={aligned} height={150} tooltip={tooltip} ariaLabel="Accelerometer x, y and z over time" />
+    </div>
   );
 }

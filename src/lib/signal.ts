@@ -224,6 +224,12 @@ export function analyzeSignal(
   fs: number,
 ): Metrics {
   const n = envelope.length;
+  // Devices that stream only the envelope (e.g. MyoWare over BLE) send no raw
+  // or rectified samples. Raw-only metrics are then reported as 0 and hidden
+  // in the UI (see metricAvailable in analytics.ts); iEMG falls back to the
+  // area under the envelope.
+  const hasRaw = raw.length === n;
+  const hasRect = rectified.length === n;
   let peak = 0;
   for (let i = 0; i < n; i++) if (envelope[i] > peak) peak = envelope[i];
   const thr = peak * 0.15;
@@ -236,8 +242,8 @@ export function analyzeSignal(
     if (envelope[i] > thr) {
       activeN++;
       envSum += envelope[i];
-      sq += raw[i] * raw[i];
-      rectSum += rectified[i];
+      if (hasRaw) sq += raw[i] * raw[i];
+      rectSum += hasRect ? rectified[i] : envelope[i];
     }
   }
 
@@ -270,7 +276,7 @@ export function analyzeSignal(
   }
 
   const repPeaks = reps.map((r) => r3(r.peak));
-  const repMedianFreq = reps.map((r) => {
+  const repMedianFreq = !hasRaw || fs < 200 ? reps.map(() => 0) : reps.map((r) => {
     // Welch-style: average 50%-overlapping windows across the contraction.
     const acc = new Float64Array(WIN / 2);
     for (let s = r.start; s + WIN <= r.end; s += WIN / 2) {
@@ -289,7 +295,7 @@ export function analyzeSignal(
   return {
     peakEnvelope: r3(peak),
     meanEnvelope: r3(activeN ? envSum / activeN : 0),
-    rms: r3(activeN ? Math.sqrt(sq / activeN) : 0),
+    rms: r3(hasRaw && activeN ? Math.sqrt(sq / activeN) : 0),
     iemg: r3(rectSum / fs),
     medianFreqHz: r1(avg(repMedianFreq)),
     fatigueIndex: r1(fatigue),

@@ -18,7 +18,8 @@ import type { Store } from "./types";
  *  sessions           { _id: sessionId, patientId, startedAt, ... }       idx: {patientId, startedAt}
  *  recordings         { _id: recordingId, patientId, sessionId, exercise, setNumber, recordedAt, metrics, ... }
  *                                                                          idx: {patientId, recordedAt}, {sessionId}
- *  signals            { _id: recordingId, patientId, sampleRateHz, raw: BinData(float32 LE), rectified, envelope }
+ *  signals            { _id: recordingId, patientId, sampleRateHz, raw: BinData(float32 LE), rectified, envelope, motion?{x,y,z} }
+ *                     (raw/rectified are empty when the device only streamed the envelope)
  *                     (one doc per set; ~100 KB per channel for 25 s @ 1 kHz, well under 16 MB)
  *  shares             { _id: token, patientId, expiresAt, revokedAt, ... } idx: {patientId}
  *  audit_events       { _id, patientId, at, actor, action, detail }        idx: {patientId, at:-1}
@@ -166,6 +167,7 @@ export class MongoStore implements Store {
         raw: toBin(signal.raw),
         rectified: toBin(signal.rectified),
         envelope: toBin(signal.envelope),
+        ...(signal.motion && { motion: { x: toBin(signal.motion.x), y: toBin(signal.motion.y), z: toBin(signal.motion.z) } }),
       });
     }
   }
@@ -185,6 +187,7 @@ export class MongoStore implements Store {
       raw: fromBin(doc.raw),
       rectified: fromBin(doc.rectified),
       envelope: fromBin(doc.envelope),
+      ...(doc.motion && { motion: { x: fromBin(doc.motion.x), y: fromBin(doc.motion.y), z: fromBin(doc.motion.z) } }),
     };
   }
 

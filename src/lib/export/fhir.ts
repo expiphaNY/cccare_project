@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 import type { PatientBundle } from "../data";
 import { CLINICIANS } from "../mock";
+import { metricAvailable } from "../analytics";
 import { resampleMean } from "../signal";
 import type { Recording, Share, SignalData } from "../types";
 import { EXERCISES } from "../types";
@@ -172,9 +173,9 @@ async function observationFor(
     comp("reps-detected", "Repetitions detected", { valueInteger: m.repsDetected }),
     comp("peak-envelope", "Peak envelope amplitude", { valueQuantity: qty(m.peakEnvelope, "mV") }),
     comp("mean-envelope", "Mean envelope amplitude (active)", { valueQuantity: qty(m.meanEnvelope, "mV") }),
-    comp("rms", "RMS amplitude (active)", { valueQuantity: qty(m.rms, "mV") }),
+    ...(metricAvailable(r, "rms") ? [comp("rms", "RMS amplitude (active)", { valueQuantity: qty(m.rms, "mV") })] : []),
     comp("iemg", "Integrated EMG", { valueQuantity: qty(m.iemg, "mV.s") }),
-    comp("median-frequency", "Median power frequency", { valueQuantity: qty(m.medianFreqHz, "Hz") }),
+    ...(metricAvailable(r, "medianFreqHz") ? [comp("median-frequency", "Median power frequency", { valueQuantity: qty(m.medianFreqHz, "Hz") })] : []),
     comp("fatigue-index", "Fatigue index (last vs first reps)", { valueQuantity: qty(m.fatigueIndex, "%") }),
   ];
 
@@ -186,7 +187,7 @@ async function observationFor(
         valueSampledData: { origin: qty(0, "mV"), period: env.dt * 1000, dimensions: 1, data: env.y.join(" ") },
       }),
     );
-    if (includeRaw) {
+    if (includeRaw && sig.raw.length) {
       const period = 1000 / sig.sampleRateHz;
       const enc = (a: Float32Array) => Array.from(a, (v) => Math.round(v * 1e5) / 1e5).join(" ");
       components.push(

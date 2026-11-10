@@ -128,6 +128,7 @@ export class MemoryStore implements Store {
           raw: Array.from(signal.raw),
           rectified: Array.from(signal.rectified),
           envelope: Array.from(signal.envelope),
+          ...(signal.motion && { motion: { x: Array.from(signal.motion.x), y: Array.from(signal.motion.y), z: Array.from(signal.motion.z) } }),
         }),
       );
     }
@@ -151,6 +152,7 @@ export class MemoryStore implements Store {
           raw: Float32Array.from(j.raw),
           rectified: Float32Array.from(j.rectified),
           envelope: Float32Array.from(j.envelope),
+          ...(j.motion && { motion: { x: Float32Array.from(j.motion.x), y: Float32Array.from(j.motion.y), z: Float32Array.from(j.motion.z) } }),
         };
       } catch {
         return null;

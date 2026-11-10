@@ -36,6 +36,7 @@ If `MONGODB_URI` is set, the app uses `src/lib/store/mongo.ts`. It creates its i
 | `/doctor/patients/:id/sessions/:sid?set=` | clinician | Session → set → three synced channel charts (zoom, jump to a rep) → raw sample table and CSV download |
 | `/patient/:id` | patient | Plain‑language progress, "start vs now", who can see your data, clinician notes |
 | `/patient/:id/compare` | patient | The same comparison tool, worded for patients |
+| `/patient/:id/record` · `/doctor/patients/:id/record` | both | Live measurement from a MyoWare sensor over Bluetooth (see below) |
 | `/patient/:id/privacy` | patient | **My data**: what's collected, how it travels, the full access log, share links, consent switches, downloads, and deleting the profile |
 | `/share/:token` | recipient | Read‑only interactive record for an outside clinic. The link expires, can be revoked, and every opening is logged |
 | `/data-handling` | everyone | Data‑handling policy and the sharing standards used |
@@ -79,6 +80,37 @@ Content-Type: application/json
 ```
 
 `rectified` and `envelope` are optional. The server derives them if they're missing. The device must be paired with the patient. Device keys can only write data, never read it. The response contains the computed metrics.
+
+## Live measurement (MyoWare over Bluetooth)
+
+`/patient/:id/record` and `/doctor/patients/:id/record` ("Start new measurement" / "New measurement") stream a **MyoWare 2.0 Wireless Shield** straight into the browser. No Arduino IDE or Node bridge is needed. It works in **Chrome or Edge** on a computer, over `https://` or `http://localhost`. It doesn't work in Safari, Firefox, or browsers built into other apps; the page detects these and offers to copy the link.
+
+**Firmware:** upload [`../firmware/MyoCareBLE/MyoCareBLE.ino`](../firmware/MyoCareBLE/MyoCareBLE.ino) to the shield with the Arduino IDE. Use board *SparkFun ESP32 Thing Plus* (esp32 core 3.3.x); no extra libraries are needed. It advertises as `MyoWareSensor1` and sends `Muscle:<ENV ADC>` 50 times a second over Bluetooth LE, with the same UUIDs as the MyoWare library. It restarts advertising after a disconnect, and its LED blinks while waiting and stays solid once connected. This matches the default **Bluetooth LE** connection, so Chrome or Edge connect directly, with no pairing and no server bridge, on localhost or any HTTPS deployment.
+
+There are three ways to connect (**Advanced sensor settings → Connection**):
+
+| | Through this computer | Chrome Web Serial | Bluetooth LE (default) |
+|---|---|---|---|
+| Use when | An older Bluetooth Classic serial sketch, shown in **macOS Bluetooth settings** as e.g. `MyoWare_Shield`, type "PDA" | Same shield, if Chrome can open it | `firmware/MyoCareBLE` or the MyoWare library's `MyoWareBLEPeripheral` example (`MyoWareSensor1`) |
+| How | The Next.js server reads `/dev/cu.MyoWare_Shield` (`GET /api/sensor/ports`, `GET /api/sensor/stream?port=`) and streams the lines to the page | The browser opens the port itself | Web Bluetooth (service `ec3af789-…e930`, characteristic `f3a56edf-…1308`) |
+| Works in | Any browser, but **only on localhost** (the server must be the Mac the sensor is paired with) | Chrome/Edge. On macOS, Chrome opens Bluetooth serial over its own link, and that failed for the shield ("Failed to open serial port") | Chrome/Edge |
+| Setup | **Pair first** in System Settings → Bluetooth, then click Connect | Pair first, then pick `MyoWare_Shield` | Don't pair it in macOS: a connected device stops advertising |
+| Data seen | `Muscle:3883,Accel_X:0.00,Accel_Y:0.00,Accel_Z:0.00` at about 45 lines/s | same | One ASCII number per notification, about 30–90/s |
+
+The bridge (`src/lib/server/serial-bridge.ts`) opens the port once and sets it to raw mode with `stty raw -echo clocal`. It keeps one reader per port and stops it when the page disconnects. Requests whose `Host` isn't localhost are refused, so a deployed site can't read the server's ports.
+
+Steps:
+
+1. Click **Connect sensor**. The page shows each step and explains any failure.
+2. Pick the exercise, location and pain score, then click **Start set**. You see the live value, a 10 s chart, set time, a live rep count and the set peak.
+3. **Stop set** keeps the set. Add more sets or remove some, then click **Finish & save session**. Nothing is stored before that. Saving creates one session with one recording per set and writes to the access log.
+4. **Try with a demo sensor** simulates the board, so you can test without hardware.
+
+The line parser accepts labelled lines (`Muscle:` / `emg=` / `Accel_X:` …) or plain numbers (`1834` or `emg,ax,ay,az`). Values are treated as 12‑bit ADC counts and converted to **millivolts at the electrodes**, using the same formula as the MyoWare library: `counts × 3.3 V / 4095 ÷ gain`, where envelope gain = 200 × (1 + gain knob kΩ). The default knob setting is 50 kΩ, which gives a gain of 10 200. The browser then resamples to 100 Hz and posts to `POST /api/record`. If the reading sits near 4095, the page warns that the electrode contact or gain is likely the problem.
+
+- **Envelope‑only:** recordings are stored with `channels: ["envelope"]`. RMS and median frequency are hidden, left out of trends, and left out of FHIR exports, because they need raw EMG at ≥200 Hz.
+- **Accelerometer:** saved as `signals.motion{x,y,z}`, plotted under the EMG and included in CSV exports, but only when it sends non‑zero values. The current shield firmware sends `0.00`.
+- Recordings made this way get `source: "ble"`, plus `capture{transport: web-serial|web-bluetooth|demo, deviceName, observedRateHz, samplesReceived, scale, gain}`.
 
 ## Sharing and the standards behind it
 

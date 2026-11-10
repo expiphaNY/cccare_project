@@ -133,10 +133,63 @@ export interface Recording {
   units: "mV";
   deviceId: string;
   metrics: Metrics;
-  /** How the signal was produced. "synthetic" = mock generator (seeded). */
-  source: "device" | "synthetic";
+  /**
+   * How the signal was produced. "synthetic" = mock generator (seeded),
+   * "device" = uploaded by the microcontroller (/api/ingest),
+   * "ble" = streamed live to the browser over Web Bluetooth (/api/record).
+   */
+  source: "device" | "synthetic" | "ble";
+  /**
+   * Channels the sensor actually measured. Missing = all three. A MyoWare
+   * Wireless Shield on stock firmware streams one output (usually the
+   * envelope), so raw-only metrics (RMS, median frequency) are not available.
+   */
+  channels?: ChannelKey[];
+  /** True when accelerometer x/y/z were captured alongside the EMG. */
+  hasMotion?: boolean;
+  /** Present for live (Web Bluetooth) recordings. */
+  capture?: LiveCapture;
   /** Present for synthetic recordings: signal is regenerated deterministically. */
   synth?: SynthParams;
+}
+
+export interface LiveCapture {
+  transport: "web-bluetooth" | "web-serial" | "bridge" | "demo";
+  /** Name the board advertised, e.g. "MyoWareSensor1". */
+  deviceName: string;
+  /** Average notification rate the browser actually received. */
+  observedRateHz: number;
+  /** Values received before resampling to sampleRateHz. */
+  samplesReceived: number;
+  /** How the device values were converted to mV. */
+  scale: ValueScale;
+  /** Amplifier gain divided out to get electrode-level mV (1 = none). */
+  gain: number;
+}
+
+/** How numbers from the board map to millivolts at the electrodes. */
+export type ValueScale = "adc12" | "volts" | "electrode-mv";
+
+export const VALUE_SCALES: Record<ValueScale, { label: string; toBoardMv: (v: number) => number; removeGain: boolean }> = {
+  adc12: { label: "12-bit ADC counts (0–4095, 3.3 V) — MyoWare stock firmware", toBoardMv: (v) => (v * 3300) / 4095, removeGain: true },
+  volts: { label: "Volts at the board output", toBoardMv: (v) => v * 1000, removeGain: true },
+  "electrode-mv": { label: "Millivolts at the electrodes (firmware calls setConvertOutput(true))", toBoardMv: (v) => v, removeGain: false },
+};
+
+/**
+ * MyoWare 2.0 amplifier gain, as in the MyoWare Arduino Library:
+ * envelope = 200 × (1 + gain-knob kΩ); raw and rectified = 200.
+ * Library default knob setting is 50 kΩ → envelope gain 10 200.
+ */
+export function myowareGain(stream: ChannelKey, gainKnobK: number) {
+  return stream === "envelope" ? 200 * (1 + Math.max(0, gainKnobK)) : 200;
+}
+
+/** Accelerometer samples in g, aligned with the EMG samples. */
+export interface MotionData {
+  x: Float32Array;
+  y: Float32Array;
+  z: Float32Array;
 }
 
 export interface SynthParams {
@@ -153,6 +206,13 @@ export interface SignalData {
   raw: Float32Array;
   rectified: Float32Array;
   envelope: Float32Array;
+  /** Optional accelerometer channels (g). */
+  motion?: MotionData;
+}
+
+/** Channels a recording measured (defaults to all three). */
+export function measuredChannels(r: Pick<Recording, "channels">): ChannelKey[] {
+  return r.channels ?? ["raw", "rectified", "envelope"];
 }
 
 export interface Share {
