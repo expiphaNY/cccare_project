@@ -35,6 +35,12 @@ export interface LiveSample {
   ax?: number;
   ay?: number;
   az?: number;
+  /**
+   * Raw EMG samples (RAW − REF, device units) captured since the previous
+   * packet, oldest first, at `rawFs` Hz. Sent by firmware/MyoCareBLE v2.
+   */
+  raw?: number[];
+  rawFs?: number;
 }
 
 export interface SensorConnection {
@@ -160,6 +166,20 @@ const NUM = "-?\\d+(?:\\.\\d+)?(?:e-?\\d+)?";
  * Returns null for blank or garbled lines.
  */
 export function parsePacket(text: string): Omit<LiveSample, "t"> | null {
+  // Batched raw EMG rides at the end of the line: "...,Fs:500,Raw:12 -3 5 …".
+  let rawPart: Pick<LiveSample, "raw" | "rawFs"> = {};
+  const rm = /(?:^|,)\s*Raw\s*:\s*(-?\d+(?:\s+-?\d+)*)\s*$/i.exec(text);
+  if (rm) {
+    const fs = Number(/(?:^|,)\s*Fs\s*:\s*(\d+)/i.exec(text)?.[1]);
+    const raw = rm[1].trim().split(/\s+/).map(Number);
+    if (fs > 0 && raw.every(Number.isFinite)) rawPart = { raw, rawFs: fs };
+    text = text.slice(0, rm.index);
+  }
+  const base = parseMain(text);
+  return base ? { ...base, ...rawPart } : null;
+}
+
+function parseMain(text: string): Omit<LiveSample, "t"> | null {
   const labelled = [...text.matchAll(new RegExp(`([A-Za-z][\\w ]*?)\\s*[:=]\\s*(${NUM})`, "gi"))];
   if (labelled.length) {
     const out: Partial<Omit<LiveSample, "t">> = {};
@@ -559,14 +579,21 @@ export async function connectSerial(o: Pick<ConnectOptions, "onSample" | "onDisc
   };
 }
 
+const DEMO_RAW_FS = 500;
+/** Standard normal sample (Box–Muller). */
+function gauss() {
+  return Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+}
+
 /**
  * A simulated MyoWare that streams ENVELOPE ADC counts and accelerometer
- * values at ~60 Hz. Lets you try the recorder without hardware (and works in
+ * values at ~60 Hz, plus batched raw EMG at 500 Hz. Lets you try the recorder without hardware (and works in
  * browsers without Web Bluetooth). Contractions follow a 4.5 s cycle.
  */
 export function connectDemo(o: Pick<ConnectOptions, "onSample" | "onDisconnect">): SensorConnection {
   const t0 = performance.now();
   let level = 0;
+  let lastRaw = t0;
   const id = window.setInterval(() => {
     const t = performance.now();
     const s = (t - t0) / 1000;
@@ -576,6 +603,10 @@ export function connectDemo(o: Pick<ConnectOptions, "onSample" | "onDisconnect">
     // First-order lag like a real envelope detector.
     level += (effort - level) * 0.12;
     const counts = 180 + level * 1900 + (Math.random() - 0.5) * 60 * (0.3 + level);
+    // Raw EMG at 500 Hz (RAW − REF counts): noise floor plus bursts that grow with effort.
+    const nRaw = Math.max(1, Math.round(((t - lastRaw) / 1000) * DEMO_RAW_FS));
+    lastRaw += (nRaw * 1000) / DEMO_RAW_FS;
+    const raw = Array.from({ length: nRaw }, () => Math.round(gauss() * (6 + level * 140)));
     // Forearm swings up during a curl: gravity rotates from -z towards +y.
     const angle = level * 1.25;
     o.onSample({
@@ -584,6 +615,8 @@ export function connectDemo(o: Pick<ConnectOptions, "onSample" | "onDisconnect">
       ax: (Math.random() - 0.5) * 0.04,
       ay: Math.sin(angle) + (Math.random() - 0.5) * 0.04,
       az: -Math.cos(angle) + (Math.random() - 0.5) * 0.04,
+      raw,
+      rawFs: DEMO_RAW_FS,
     });
   }, 16);
   let closed = false;
@@ -603,14 +636,15 @@ export function connectDemo(o: Pick<ConnectOptions, "onSample" | "onDisconnect">
  * Resamples irregular BLE samples onto a uniform grid (linear interpolation),
  * so the server's analysis and the charts can treat them like any other set.
  */
-export function resampleUniform(t: number[], v: number[], fs: number): Float32Array {
-  if (t.length < 2) return Float32Array.from(v);
+export function resampleUniform(t: number[], v: number[], fs: number, grid?: { start: number; n: number }): Float32Array {
+  if (t.length < 2) return grid ? new Float32Array(grid.n).fill(v[0] ?? 0) : Float32Array.from(v);
   const dur = (t[t.length - 1] - t[0]) / 1000;
-  const n = Math.max(2, Math.floor(dur * fs) + 1);
+  const n = grid?.n ?? Math.max(2, Math.floor(dur * fs) + 1);
+  const start = grid?.start ?? t[0];
   const out = new Float32Array(n);
   let j = 0;
   for (let i = 0; i < n; i++) {
-    const ti = t[0] + (i * 1000) / fs;
+    const ti = start + (i * 1000) / fs;
     while (j < t.length - 2 && t[j + 1] < ti) j++;
     const span = t[j + 1] - t[j];
     const a = span > 0 ? Math.min(1, Math.max(0, (ti - t[j]) / span)) : 0;

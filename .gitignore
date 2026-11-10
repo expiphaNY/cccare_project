@@ -42,3 +42,7 @@ next-env.d.ts
 .data/
 
 atlas-credentials.env
+
+# static demo build (npm run build:pages)
+/out/
+/.pages-stash/

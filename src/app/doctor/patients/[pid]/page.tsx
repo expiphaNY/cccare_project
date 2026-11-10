@@ -75,7 +75,10 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
                 return (
                   <li key={s.id}>
                     <Link href={`${base}/sessions/${s.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 hover:bg-brand-tint/60 sm:px-6">
-                      <span className="w-28 text-sm font-medium tabular">{fmtDate(s.startedAt)}</span>
+                      <span className="w-32 text-sm font-medium tabular">
+                        {fmtDate(s.startedAt)}
+                        <span className="block text-[12px] font-normal text-ink-2">{fmtTime(s.startedAt)}</span>
+                      </span>
                       <span className="inline-flex w-20 items-center gap-1 text-[13px] text-ink-2">
                         {s.location === "clinic" ? <MapPin className="size-3.5" aria-hidden /> : <Home className="size-3.5" aria-hidden />}
                         {s.location === "clinic" ? "Clinic" : "Home"}
@@ -147,7 +150,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
               notes.map((s) => (
                 <li key={s.id} className="rounded-xl bg-canvas px-3 py-2.5">
                   <Link href={`${base}/sessions/${s.id}`} className="text-[12px] font-medium text-brand hover:underline">
-                    {fmtShortDate(s.startedAt)}
+                    {fmtShortDate(s.startedAt)} · {fmtTime(s.startedAt)}
                   </Link>
                   <p className="whitespace-pre-line text-sm">{s.notes}</p>
                 </li>

@@ -26,6 +26,29 @@ DEVICE_INGEST_KEY="change-me" # bearer token for the microcontroller upload API
 
 If `MONGODB_URI` is set, the app uses `src/lib/store/mongo.ts`. It creates its indexes, and if the database is empty it seeds the demo patients.
 
+## Host the demo on GitHub Pages
+
+GitHub Pages only serves static files, so it can't run the full app (API routes, server actions, MongoDB). Instead the repo publishes a **static, read‑only demo**: the same UI on the built‑in synthetic data. Signals are regenerated in the browser. Writes (new patient, notes, sharing, consent, deleting, saving a recording) and server‑made exports (PDF, HTML, FHIR, CSV) are switched off. It never connects to MongoDB and never reads `.env.local` data into the pages.
+
+**One‑time setup**
+
+1. Push this repo to GitHub. The workflow in `.github/workflows/deploy-pages.yml` assumes the repo root is the folder that contains `web/`.
+2. In the repo go to **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+3. Push to `main` (or run the workflow from the Actions tab). The site appears at `https://<user>.github.io/<repo>/`.
+
+The workflow sets the sub‑path from the repo name automatically (`<user>.github.io` repos are served from the root).
+
+**Try it locally**
+
+```bash
+cd web
+NEXT_PUBLIC_BASE_PATH=/care_project npm run build:pages   # writes web/out
+```
+
+Serve `out/` under that same sub‑path to check it, for example by putting it in a folder called `care_project` and running `python3 -m http.server` one level up, then opening `http://localhost:8000/care_project/`.
+
+Notes: dates like "expires in 23 days" and "3 days ago" are fixed at build time, so re‑run the workflow now and then. Everything under `web/src/lib/demo/` and the `DEMO` flag in `web/src/lib/demo.ts` exists only for this build; `npm run dev` and `npm run build` are unchanged.
+
 ## Where things are
 
 | Page | Who | What |

@@ -1,5 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
+import { DEMO } from "../demo";
+import { DemoStore } from "./demo";
 import { MemoryStore } from "./memory";
 import { MongoStore } from "./mongo";
 import type { Store } from "./types";
@@ -9,8 +11,12 @@ const g = globalThis as unknown as { __store?: Promise<Store>; __storeFallback?:
 /**
  * Returns the active store. Calling `connection()` marks the caller as
  * request-time only, so patient data is never baked into a prerendered page.
+ *
+ * The static demo build is the one exception: it deliberately bakes the mock
+ * data into the pages and never connects to a database.
  */
 export async function getStore(): Promise<Store> {
+  if (DEMO) return (g.__store ??= Promise.resolve(new DemoStore()));
   await connection();
   g.__store ??= createStore();
   return g.__store;

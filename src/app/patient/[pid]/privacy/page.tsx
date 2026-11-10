@@ -6,7 +6,7 @@ import { AccessLog, DataFlow, SharesTable, SignalExplainer, WhoCanSee } from "@/
 import { ConsentToggles, DeleteProfile, ExportLinks } from "@/components/privacy";
 import { Card, CardHeader } from "@/components/ui";
 import { accessSummary, getPatientBundle } from "@/lib/data";
-import { fmtDate, fullName } from "@/lib/format";
+import { fmtDateTime, fullName } from "@/lib/format";
 import { getStore } from "@/lib/store";
 
 export const metadata = { title: "My data" };
@@ -94,7 +94,7 @@ export default async function PatientPrivacy({ params }: PageProps<"/patient/[pi
                     patientName={fullName(p)}
                     triggerLabel="Share"
                     triggerVariant="secondary"
-                    sessions={[...b.sessions].reverse().map((s) => ({ id: s.id, label: fmtDate(s.startedAt) }))}
+                    sessions={[...b.sessions].reverse().map((s) => ({ id: s.id, label: fmtDateTime(s.startedAt) }))}
                   />
                 ) : undefined
               }

@@ -2,7 +2,7 @@ import { authorize, shouldLog } from "@/lib/access";
 import { logAccess } from "@/lib/data";
 import { getStore } from "@/lib/store";
 import { EXERCISES, measuredChannels } from "@/lib/types";
-import { fmtDate } from "@/lib/format";
+import { fmtDateTime } from "@/lib/format";
 
 const b64 = (a: Float32Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString("base64");
 
@@ -32,7 +32,7 @@ export async function GET(req: Request, ctx: RouteContext<"/api/signal/[rid]">) 
       purpose,
       purpose === "comparison_viewed"
         ? "Compared recordings over time."
-        : `Opened signals for ${EXERCISES[rec.exercise].name}, set ${rec.setNumber} (${fmtDate(rec.recordedAt)}).`,
+        : `Opened signals for ${EXERCISES[rec.exercise].name}, set ${rec.setNumber} (${fmtDateTime(rec.recordedAt)}).`,
     );
   }
 

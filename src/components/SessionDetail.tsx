@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ChevronLeft, ChevronRight, Download, Home, MapPin } from "lucide-react";
 import { METRICS, metricAvailable, type MetricKey } from "@/lib/analytics";
 import { clinicianById } from "@/lib/data";
+import { DEMO } from "@/lib/demo";
 import { fmtDate, fmtTime } from "@/lib/format";
 import type { Patient, Recording, Session, SignalData } from "@/lib/types";
 import { EXERCISES } from "@/lib/types";
@@ -129,9 +130,16 @@ export function SessionDetail({
               subtitle={
                 plain
                   ? "Each shaded band is one repetition. Taller = your muscle worked harder."
-                  : "Shaded bands = detected contractions. Drag to zoom; cursor is synced across channels."
+                  : "Shaded bands = detected contractions. Drag, use the slider, +/− keys or pinch to zoom; cursor is synced across channels."
               }
             />
+            {(selected.capture?.clippedPct ?? 0) >= 2 && !selected.capture?.rawStreamed && (
+              <p className="mx-5 mt-3 rounded-xl bg-warn-soft px-3 py-2 text-[13px] text-warn sm:mx-6" role="note">
+                {plain
+                  ? `The sensor was at the top of its scale for ${selected.capture!.clippedPct}% of this set, so your strongest moments read lower than they really were.`
+                  : `Sensor envelope at its maximum for ${selected.capture!.clippedPct}% of this set: peaks were cut off, so peak and area values here are underestimates.`}
+              </p>
+            )}
             <div className="pt-4">
               <SignalViewer key={selected.id} recordingId={selected.id} access={access} audience={audience} />
             </div>
@@ -184,7 +192,7 @@ export function SessionDetail({
                 title="Raw samples"
                 subtitle={`${rawPreview.envelope.length.toLocaleString()} samples × ${rawPreview.raw.length ? "3 channels" : "envelope only"}${rawPreview.motion ? " + accelerometer" : ""}. First 40 shown.`}
                 action={
-                  <a href={`/api/export/csv?rid=${selected.id}&${access}`} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-line-strong px-3 text-[13px] font-medium text-brand hover:bg-brand-tint">
+                  DEMO ? null : <a href={`/api/export/csv?rid=${selected.id}&${access}`} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-line-strong px-3 text-[13px] font-medium text-brand hover:bg-brand-tint">
                     <Download className="size-3.5" aria-hidden /> Download CSV
                   </a>
                 }
@@ -218,7 +226,7 @@ export function SessionDetail({
                 {selected.source === "synthetic"
                   ? "synthetic generator (seeded)"
                   : selected.source === "ble"
-                    ? `${selected.capture?.transport === "demo" ? "simulated demo sensor, recorded live" : "live Bluetooth recording"} from ${selected.deviceId}${selected.capture ? ` (${selected.capture.observedRateHz} Hz received, resampled to ${selected.sampleRateHz} Hz)` : ""}`
+                    ? `${selected.capture?.transport === "demo" ? "simulated demo sensor, recorded live" : "live Bluetooth recording"} from ${selected.deviceId}${selected.capture ? ` (${selected.capture.observedRateHz} Hz received, resampled to ${selected.sampleRateHz} Hz${selected.capture.rawStreamed ? "; raw EMG streamed, rectified and envelope derived from it" : ""}${selected.capture.clippedPct ? `; sensor envelope at its maximum ${selected.capture.clippedPct}% of the time` : ""})` : ""}`
                     : `device ${selected.deviceId}`} · units {selected.units} ·
                 recording id <span className="font-mono">{selected.id}</span>
               </p>

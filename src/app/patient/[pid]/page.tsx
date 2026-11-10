@@ -8,7 +8,7 @@ import { Card, CardHeader, cx } from "@/components/ui";
 import { sessionsPerWeek } from "@/lib/analytics";
 import { accessSummary, getPatientBundle, patientActor, logAccess, clinicianById } from "@/lib/data";
 import { shouldLog } from "@/lib/access";
-import { fmtDate, fmtShortDate, msSince, relTime } from "@/lib/format";
+import { fmtDateTime, fmtShortDate, fmtTime, msSince, relTime } from "@/lib/format";
 import { getStore } from "@/lib/store";
 import { EXERCISES } from "@/lib/types";
 import { summaries, trendProps } from "@/lib/viewmodels";
@@ -131,7 +131,7 @@ export default async function PatientHome({ params }: PageProps<"/patient/[pid]"
                 <div>
                   <p className="whitespace-pre-line text-[15px] leading-relaxed">{lastNote.notes}</p>
                   <Link href={`${base}/sessions/${lastNote.id}`} className="mt-1 inline-block text-[12px] font-medium text-brand hover:underline">
-                    From your session on {fmtShortDate(lastNote.startedAt)}
+                    From your session on {fmtShortDate(lastNote.startedAt)} at {fmtTime(lastNote.startedAt)}
                   </Link>
                 </div>
               </div>
@@ -140,7 +140,7 @@ export default async function PatientHome({ params }: PageProps<"/patient/[pid]"
             )}
             {sessions.length > 0 && (
               <p className="mt-5 border-t border-line pt-4 text-[13px] text-ink-2">
-                Last session: <b className="text-ink">{fmtDate(sessions[sessions.length - 1].startedAt)}</b>
+                Last session: <b className="text-ink">{fmtDateTime(sessions[sessions.length - 1].startedAt)}</b>
               </p>
             )}
           </div>

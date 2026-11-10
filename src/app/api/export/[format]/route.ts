@@ -3,7 +3,7 @@ import { getPatientBundle, logAccess, resolveShare, type PatientBundle } from "@
 import { buildFhirBundle } from "@/lib/export/fhir";
 import { buildHtml } from "@/lib/export/html";
 import { buildPdf } from "@/lib/export/pdf";
-import { fmtDate, fullName } from "@/lib/format";
+import { fmtDateTime, fullName } from "@/lib/format";
 import { getStore } from "@/lib/store";
 import type { Actor, Share } from "@/lib/types";
 import { EXERCISES } from "@/lib/types";
@@ -39,17 +39,18 @@ export async function GET(req: Request, ctx: RouteContext<"/api/export/[format]"
     if (!sig) return Response.json({ error: "Signal unavailable" }, { status: 404 });
     const lines = [
       `# patient_id=${rec.patientId},recording_id=${rec.id},exercise=${EXERCISES[rec.exercise].name},muscle=${rec.muscle},side=${rec.side},set=${rec.setNumber},recorded_at=${rec.recordedAt},fs_hz=${sig.sampleRateHz},units=mV,source=${rec.source}`,
-      `sample,t_s,raw_mV,rectified_mV,envelope_mV${sig.motion ? ",accel_x_g,accel_y_g,accel_z_g" : ""}`,
+      `sample,timestamp,t_s,raw_mV,rectified_mV,envelope_mV${sig.motion ? ",accel_x_g,accel_y_g,accel_z_g" : ""}`,
     ];
     const cell = (a: Float32Array, i: number) => (a.length ? a[i].toFixed(6) : "");
     const m = sig.motion;
+    const t0 = Date.parse(rec.recordedAt);
     for (let i = 0; i < sig.envelope.length; i++)
       lines.push(
-        `${i},${(i / sig.sampleRateHz).toFixed(4)},${cell(sig.raw, i)},${cell(sig.rectified, i)},${sig.envelope[i].toFixed(6)}${
+        `${i},${new Date(t0 + (i * 1000) / sig.sampleRateHz).toISOString()},${(i / sig.sampleRateHz).toFixed(4)},${cell(sig.raw, i)},${cell(sig.rectified, i)},${sig.envelope[i].toFixed(6)}${
           m ? `,${m.x[i].toFixed(4)},${m.y[i].toFixed(4)},${m.z[i].toFixed(4)}` : ""
         }`,
       );
-    await logAccess(rec.patientId, grant.actor, "export_csv", `Downloaded raw samples for ${EXERCISES[rec.exercise].name}, set ${rec.setNumber} (${fmtDate(rec.recordedAt)}).`);
+    await logAccess(rec.patientId, grant.actor, "export_csv", `Downloaded raw samples for ${EXERCISES[rec.exercise].name}, set ${rec.setNumber} (${fmtDateTime(rec.recordedAt)}).`);
     return new Response(lines.join("\n"), {
       headers: { ...headers, "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${rec.id}.csv"` },
     });

@@ -26,12 +26,14 @@ import { EXERCISES, VALUE_SCALES } from "@/lib/types";
  *     "observedRateHz": 62.4,
  *     "samplesReceived": 1870,
  *     "values": [ ..mV at the electrodes, uniform.. ],
+ *     "raw": [ ..raw EMG mV, same grid.. ],        // optional (firmware v2 batches)
+ *     "clippedPct": 4.2,                            // optional, envelope readings at max
  *     "motion": { "x": [..g..], "y": [..], "z": [..] }   // optional, same length
  *   }]
  * }
  */
 const MAX_SETS = 20;
-const MAX_SAMPLES = 120_000; // 20 min at 100 Hz
+const MAX_SAMPLES = 300_000; // 10 min at 500 Hz (raw) or 50 min at 100 Hz
 
 export async function POST(req: Request) {
   const params = new URL(req.url).searchParams;
@@ -76,7 +78,17 @@ export async function POST(req: Request) {
     let rectified = empty;
     let envelope = v;
     let channels: ChannelKey[] = ["envelope"];
-    if (stream === "raw") {
+    const rawBatch = num(s.raw);
+    if (rawBatch && rawBatch.length === values.length) {
+      // Raw EMG streamed next to the envelope (fixed 200× gain, so it isn't cut
+      // off when the envelope clips). Derive rectified + envelope from it, the
+      // same way /api/ingest and the seed data do, so metrics stay comparable.
+      const r = Float32Array.from(rawBatch);
+      const mean = r.reduce((a, b) => a + b, 0) / r.length;
+      raw = r.map((x) => x - mean);
+      ({ rectified, envelope } = deriveChannels(raw, fs));
+      channels = ["raw", "rectified", "envelope"];
+    } else if (stream === "raw") {
       // Raw output is centred on mid-supply; remove the DC offset.
       const mean = v.reduce((a, b) => a + b, 0) / v.length;
       raw = v.map((x) => x - mean);
@@ -105,6 +117,8 @@ export async function POST(req: Request) {
       samplesReceived: Math.round(Number(s.samplesReceived) || values.length),
       scale,
       gain: Math.max(1, Number(body.gain) || 1),
+      ...(Number.isFinite(Number(s.clippedPct)) && { clippedPct: Math.min(100, Math.max(0, Math.round(Number(s.clippedPct) * 10) / 10)) }),
+      ...(channels.includes("raw") && rawBatch && { rawStreamed: true }),
     };
     parsed.push({
       rec: {

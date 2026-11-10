@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { BASE_PATH, DEMO } from "./demo";
+import type { DemoManifest } from "./demo/manifest";
+import { generateSignal } from "./signal";
 import type { ChannelKey } from "./types";
 
 export interface ClientSignal {
@@ -26,9 +29,43 @@ function decode(b64: string | null) {
   return new Float32Array(bytes.buffer);
 }
 
+let manifest: Promise<DemoManifest> | undefined;
+
+/** Static demo: no server, so regenerate the (deterministic) mock signal here. */
+async function demoSignal(id: string, access: string): Promise<ClientSignal> {
+  manifest ??= fetch(`${BASE_PATH}/demo-signals.json`).then((r) => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json() as Promise<DemoManifest>;
+  });
+  const m = await manifest.catch((e) => {
+    manifest = undefined;
+    throw e;
+  });
+  const rec = m.recordings[id];
+  if (!rec) throw new Error("Signal unavailable");
+  const token = new URLSearchParams(access).get("token");
+  const includeRaw = token ? !!m.shareRaw[token] : true; // share links may withhold raw channels
+  const g = generateSignal(rec.synth, rec.fs);
+  return {
+    id,
+    fs: g.fs,
+    n: g.envelope.length,
+    envelope: g.envelope,
+    rectified: includeRaw ? g.rectified : null,
+    raw: includeRaw ? g.raw : null,
+    channels: rec.channels,
+    motion: null,
+  };
+}
+
 export function fetchSignal(id: string, access: string, ctx?: "compare"): Promise<ClientSignal> {
   const key = `${id}|${access}`;
   let p = cache.get(key);
+  if (!p && DEMO) {
+    p = demoSignal(id, access);
+    p.catch(() => cache.delete(key));
+    cache.set(key, p);
+  }
   if (!p) {
     p = fetch(`/api/signal/${encodeURIComponent(id)}?${access}${ctx ? `&ctx=${ctx}` : ""}`).then(async (r) => {
       if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `HTTP ${r.status}`);

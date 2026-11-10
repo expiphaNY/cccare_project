@@ -34,11 +34,13 @@ export class MemoryStore implements Store {
   private db: DB;
   private signalCache = new Map<string, SignalData>();
 
-  constructor() {
+  /** `ephemeral`: seed in memory only, never read or write .data/ (static demo build). */
+  constructor(private readonly ephemeral = false) {
     this.db = this.load();
   }
 
   private load(): DB {
+    if (this.ephemeral) return { version: DB_VERSION, ...buildSeed(), receipts: [] };
     try {
       const parsed = JSON.parse(fs.readFileSync(DB_FILE, "utf8")) as DB;
       if (parsed.version === DB_VERSION) return parsed;
@@ -52,6 +54,7 @@ export class MemoryStore implements Store {
   }
 
   private persist(db = this.db) {
+    if (this.ephemeral) return;
     fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(DB_FILE, JSON.stringify(db));
   }

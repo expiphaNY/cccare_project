@@ -11,11 +11,15 @@ import { Avatar, Badge, Card, CardHeader, PageContainer } from "@/components/ui"
 import { shouldLog } from "@/lib/access";
 import { clinicianById, logAccess, resolveShare, shareState } from "@/lib/data";
 import { ageFrom, fmtDate, fmtTime, fullName, initials, relTime } from "@/lib/format";
+import { DEMO } from "@/lib/demo";
+import { shareParams } from "@/lib/demo/params";
 import { getStore } from "@/lib/store";
 import { EXERCISES } from "@/lib/types";
 import { compareRecordings, defaultComparison, exerciseList, summaries, trendProps } from "@/lib/viewmodels";
 
 export const metadata: Metadata = { title: "Shared record", referrer: "no-referrer" };
+
+export const generateStaticParams = DEMO ? shareParams : undefined;
 
 export default async function SharedRecord({ params }: PageProps<"/share/[token]">) {
   const { token } = await params;

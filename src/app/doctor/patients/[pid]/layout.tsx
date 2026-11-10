@@ -7,8 +7,12 @@ import { ShareDialog } from "@/components/ShareDialog";
 import { ExportLinks } from "@/components/privacy";
 import { Avatar, Badge, Breadcrumbs, PageContainer, btn } from "@/components/ui";
 import { clinicianById } from "@/lib/data";
-import { ageFrom, fmtDate, fullName, initials } from "@/lib/format";
+import { DEMO } from "@/lib/demo";
+import { patientParams } from "@/lib/demo/params";
+import { ageFrom, fmtDate, fmtTime, fullName, initials } from "@/lib/format";
 import { getStore } from "@/lib/store";
+
+export const generateStaticParams = DEMO ? patientParams : undefined;
 
 export default function PatientRecordLayout({ children, params }: LayoutProps<"/doctor/patients/[pid]">) {
   return (
@@ -77,7 +81,7 @@ async function RecordHeader({ params }: { params: Promise<{ pid: string }> }) {
             patientName={fullName(p)}
             sessions={[...sessions].reverse().map((s, i) => ({
               id: s.id,
-              label: `${fmtDate(s.startedAt)} · ${s.location === "clinic" ? "Clinic" : "Home"} (session ${sessions.length - i})`,
+              label: `${fmtDate(s.startedAt)} ${fmtTime(s.startedAt)} · ${s.location === "clinic" ? "Clinic" : "Home"} (session ${sessions.length - i})`,
             }))}
           />
         </div>

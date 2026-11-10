@@ -2,13 +2,14 @@ import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 import { Logo } from "@/components/nav";
 import { ButtonLink, Card, PageContainer } from "@/components/ui";
+import { DEMO } from "@/lib/demo";
 import { fmtDateTime } from "@/lib/format";
 import { getStore } from "@/lib/store";
 
 export const metadata = { title: "Profile deleted" };
 
 export default async function Deleted({ searchParams }: PageProps<"/deleted">) {
-  const sp = await searchParams;
+  const sp: Record<string, string | string[] | undefined> = DEMO ? {} : await searchParams;
   const store = await getStore();
   const receipt = (await store.listDeletionReceipts()).find((r) => r.id === sp.r);
   const fromClinician = sp.from === "clinician";

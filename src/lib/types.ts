@@ -165,6 +165,10 @@ export interface LiveCapture {
   scale: ValueScale;
   /** Amplifier gain divided out to get electrode-level mV (1 = none). */
   gain: number;
+  /** Share (0–100) of envelope readings at the sensor's maximum; peaks above it were cut off. */
+  clippedPct?: number;
+  /** True when raw EMG was streamed; rectified and envelope were then derived from it. */
+  rawStreamed?: boolean;
 }
 
 /** How numbers from the board map to millivolts at the electrodes. */

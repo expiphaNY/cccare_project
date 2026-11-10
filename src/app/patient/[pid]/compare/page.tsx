@@ -1,13 +1,15 @@
 import { notFound } from "next/navigation";
 import { CompareTool } from "@/components/CompareTool";
+import { CompareFromQuery } from "@/components/demo/CompareFromQuery";
 import { getPatientBundle } from "@/lib/data";
+import { DEMO } from "@/lib/demo";
 import { compareRecordings, defaultComparison, exerciseList } from "@/lib/viewmodels";
 
 export const metadata = { title: "Compare" };
 
 export default async function PatientCompare({ params, searchParams }: PageProps<"/patient/[pid]/compare">) {
   const { pid } = await params;
-  const sp = await searchParams;
+  const sp: Record<string, string | string[] | undefined> = DEMO ? {} : await searchParams;
   const b = await getPatientBundle(pid);
   if (!b) notFound();
   const def = defaultComparison(b.patient, b.recordings);
@@ -22,15 +24,26 @@ export default async function PatientCompare({ params, searchParams }: PageProps
           strongly.
         </p>
       </div>
-      <CompareTool
-        key={`${ex}|${ids.join(",")}`}
-        recordings={compareRecordings(b.recordings)}
-        exercises={exerciseList(b.patient)}
-        access="as=patient"
-        audience="patient"
-        initialExercise={ex}
-        initialIds={ids}
-      />
+      {DEMO ? (
+        <CompareFromQuery
+          recordings={compareRecordings(b.recordings)}
+          exercises={exerciseList(b.patient)}
+          access="as=patient"
+          audience="patient"
+          defaultExercise={def.exercise}
+          defaultIds={def.ids}
+        />
+      ) : (
+        <CompareTool
+          key={`${ex}|${ids.join(",")}`}
+          recordings={compareRecordings(b.recordings)}
+          exercises={exerciseList(b.patient)}
+          access="as=patient"
+          audience="patient"
+          initialExercise={ex}
+          initialIds={ids}
+        />
+      )}
     </div>
   );
 }

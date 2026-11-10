@@ -37,6 +37,7 @@ import {
   type SensorConnection,
 } from "@/lib/ble";
 import { detectReps } from "@/lib/client-signal";
+import { DEMO, DEMO_MSG } from "@/lib/demo";
 import { VALUE_SCALES, myowareGain, type ChannelKey, type ValueScale } from "@/lib/types";
 import { Sparkline } from "./charts/Sparkline";
 import { AXIS, UChart } from "./charts/UChart";
@@ -56,17 +57,38 @@ function fillGaps(a: Nullable[]): number[] {
 
 /** Uniform rate every live set is resampled to before saving. */
 const SAVE_FS = 100;
-const WINDOW_S = 10;
+const MAX_WINDOW_S = 60;
+const WINDOW_STEPS = [5, 10, 15, 20, 30, 45, 60];
 const MIN_SET_S = 2;
 const MOTION_COLORS = ["#2a78d6", "#eb6834", "#1baf7a"];
 
 type Status = "idle" | "connecting" | "ready" | "recording" | "saving";
+type LiveView = "envelope" | "rectified" | "raw";
+
+/** Board reading at (or within ~1 % of) the ADC's top: the signal is being cut off. */
+function isClipped(scale: ValueScale, v: number) {
+  return scale === "adc12" ? v >= 4050 : scale === "volts" ? v >= 3.26 : false;
+}
+/** Largest value the sensor can report, in electrode mV (null if unknown). */
+function ceilingMv(st: Settings) {
+  if (st.scale === "electrode-mv") return null;
+  return VALUE_SCALES[st.scale].toBoardMv(st.scale === "adc12" ? 4095 : 3.3) / gainFor(st);
+}
+/** Raw output always has the fixed 200× gain (no knob). */
+function rawGainFor(st: Settings) {
+  return VALUE_SCALES[st.scale].removeGain ? myowareGain("raw", st.gainKnobK) : 1;
+}
 
 interface CompletedSet {
   startedAt: string;
   durationS: number;
-  values: Float32Array; // mV at SAVE_FS
+  values: Float32Array; // mV at fs
+  /** Raw EMG in electrode mV at fs, when the firmware streamed it. */
+  raw?: Float32Array;
+  fs: number;
   motion?: { x: Float32Array; y: Float32Array; z: Float32Array };
+  /** Share of envelope readings at the sensor's ceiling (0–100). */
+  clippedPct: number;
   observedRateHz: number;
   samplesReceived: number;
   peak: number;
@@ -135,22 +157,64 @@ export function LiveRecorder({
   const [pain, setPain] = useState<string>("");
   const [sets, setSets] = useState<CompletedSet[]>([]);
   const [hasMotion, setHasMotion] = useState(false);
-  const [readout, setReadout] = useState({ value: 0, max: 0, rate: 0, elapsed: 0, peak: 0, reps: 0, stale: false, sinceConnect: 0, rawLevel: 0 });
+  const [rawFs, setRawFs] = useState(0);
+  const hasRaw = rawFs > 0;
+  const [liveView, setLiveView] = useState<LiveView>("envelope");
+  const [windowS, setWindowS] = useState(10);
+  const [readout, setReadout] = useState({ value: 0, max: 0, rate: 0, elapsed: 0, peak: 0, reps: 0, stale: false, sinceConnect: 0, rawLevel: 0, clipPct: 0, setClipPct: 0 });
 
   const conn = useRef<SensorConnection | null>(null);
   const statusRef = useRef<Status>("idle");
   const settingsRef = useRef(settings);
+  const viewRef = useRef<LiveView>("envelope");
+  const windowRef = useRef(10);
   useEffect(() => {
     statusRef.current = status;
     settingsRef.current = settings;
+    viewRef.current = hasRaw ? liveView : "envelope";
+    windowRef.current = windowS;
   });
   // Rolling display buffer (seconds since connect, mV, accel g).
   const t0 = useRef(0);
   // Motion arrays stay aligned with t: null where a reading carried no motion
   // (e.g. the first packets before Bluetooth negotiates a larger packet size).
-  const buf = useRef({ t: [] as number[], v: [] as number[], ax: [] as Nullable[], ay: [] as Nullable[], az: [] as Nullable[], last: 0, rawEma: 0 });
+  const emptyBuf = () => ({
+    t: [] as number[],
+    v: [] as number[],
+    ax: [] as Nullable[],
+    ay: [] as Nullable[],
+    az: [] as Nullable[],
+    // Raw EMG: seconds since connect, mV (drift removed), |mV|.
+    rt: [] as number[],
+    rv: [] as number[],
+    rr: [] as number[],
+    clip: [] as number[], // 1 where the envelope reading was at the ceiling
+    last: 0,
+    rawEma: 0,
+    rawClock: 0, // performance.now() ms of the newest raw sample
+    rawDc: NaN, // slow running mean of the raw channel
+    rawFs: 0,
+  });
+  const buf = useRef(emptyBuf());
   // Current set accumulator (performance.now() ms, mV, g).
-  const rec = useRef({ start: 0, startIso: "", t: [] as number[], v: [] as number[], ax: [] as Nullable[], ay: [] as Nullable[], az: [] as Nullable[], peak: 0, floor: Infinity, reps: 0, inRep: false, repStart: 0 });
+  const emptyRec = () => ({
+    start: 0,
+    startIso: "",
+    t: [] as number[],
+    v: [] as number[],
+    ax: [] as Nullable[],
+    ay: [] as Nullable[],
+    az: [] as Nullable[],
+    rt: [] as number[],
+    rv: [] as number[],
+    clipped: 0,
+    peak: 0,
+    floor: Infinity,
+    reps: 0,
+    inRep: false,
+    repStart: 0,
+  });
+  const rec = useRef(emptyRec());
   const emgPlot = useRef<uPlot | null>(null);
   const motionPlot = useRef<uPlot | null>(null);
 
@@ -161,18 +225,53 @@ export function LiveRecorder({
     const mv = VALUE_SCALES[st.scale].toBoardMv(s.v) / gainFor(st);
     const b = buf.current;
     const ts = (s.t - t0.current) / 1000;
+    const clipped = isClipped(st.scale, s.v);
     b.t.push(ts);
     b.v.push(mv);
+    b.clip.push(clipped ? 1 : 0);
     const motion = s.ax != null && s.ay != null && s.az != null;
     b.ax.push(motion ? s.ax! : null);
     b.ay.push(motion ? s.ay! : null);
     b.az.push(motion ? s.az! : null);
     b.last = s.t;
     b.rawEma = b.rawEma ? 0.95 * b.rawEma + 0.05 * s.v : s.v;
-    // Trim to the display window (+2 s margin) in batches.
-    if (b.t.length > 64 && b.t[0] < ts - WINDOW_S - 2) {
-      const cut = b.t.findIndex((x) => x >= ts - WINDOW_S);
-      for (const k of ["t", "v", "ax", "ay", "az"] as const) b[k].splice(0, cut);
+    // Trim to the longest display window (+2 s margin) in batches.
+    if (b.t.length > 64 && b.t[0] < ts - MAX_WINDOW_S - 2) {
+      const cut = b.t.findIndex((x) => x >= ts - MAX_WINDOW_S);
+      for (const k of ["t", "v", "ax", "ay", "az", "clip"] as const) b[k].splice(0, cut);
+    }
+
+    // Batched raw EMG: give each sample its own time. Packets can arrive in
+    // bursts, so continue the previous batch rather than trusting arrival times,
+    // but never run more than 250 ms ahead of (or behind) the clock.
+    const rawT: number[] = [];
+    const rawV: number[] = [];
+    if (s.raw?.length && s.rawFs) {
+      const dt = 1000 / s.rawFs;
+      const n = s.raw.length;
+      let start = Math.max(b.rawClock + dt, s.t - (n - 1) * dt);
+      if (start > s.t + 250 || start < s.t - (n - 1) * dt - 250) start = s.t - (n - 1) * dt;
+      const g = rawGainFor(st);
+      const toMv = VALUE_SCALES[st.scale].toBoardMv;
+      // Drift removal: running mean with a ~2 s time constant.
+      const alpha = 1 / (2 * s.rawFs);
+      for (let i = 0; i < n; i++) {
+        const m = toMv(s.raw[i]) / g;
+        b.rawDc = Number.isNaN(b.rawDc) ? m : b.rawDc + alpha * (m - b.rawDc);
+        const x = m - b.rawDc;
+        const t = start + i * dt;
+        rawT.push(t);
+        rawV.push(x);
+        b.rt.push((t - t0.current) / 1000);
+        b.rv.push(x);
+        b.rr.push(Math.abs(x));
+      }
+      b.rawClock = start + (n - 1) * dt;
+      b.rawFs = s.rawFs;
+      if (b.rt.length > 2048 && b.rt[0] < ts - MAX_WINDOW_S - 2) {
+        const cut = b.rt.findIndex((x) => x >= ts - MAX_WINDOW_S);
+        for (const k of ["rt", "rv", "rr"] as const) b[k].splice(0, cut);
+      }
     }
 
     if (statusRef.current === "recording") {
@@ -182,6 +281,11 @@ export function LiveRecorder({
       r.ax.push(motion ? s.ax! : null);
       r.ay.push(motion ? s.ay! : null);
       r.az.push(motion ? s.az! : null);
+      for (let i = 0; i < rawT.length; i++) {
+        r.rt.push(rawT[i]);
+        r.rv.push(rawV[i]);
+      }
+      if (clipped) r.clipped++;
       // Live rep counter: hysteresis between the resting floor and the set peak.
       r.peak = Math.max(r.peak, mv);
       r.floor = Math.min(r.floor, mv);
@@ -204,6 +308,7 @@ export function LiveRecorder({
     (s: LiveSample) => {
       // Firmware without a working accelerometer sends 0.00 for x/y/z: ignore that.
       if (s.ax != null && (s.ax !== 0 || s.ay !== 0 || s.az !== 0)) setHasMotion(true);
+      if (s.raw?.length && s.rawFs) setRawFs(s.rawFs);
       onSample(s);
     },
     [onSample],
@@ -219,9 +324,11 @@ export function LiveRecorder({
       raf = requestAnimationFrame(loop);
       const b = buf.current;
       const tNow = (now - t0.current) / 1000;
-      const min = tNow - WINDOW_S;
+      const min = tNow - windowRef.current;
+      const view = viewRef.current;
       emgPlot.current?.batch(() => {
-        emgPlot.current!.setData([b.t, b.v] as uPlot.AlignedData, false);
+        const d = view === "raw" ? [b.rt, b.rv] : view === "rectified" ? [b.rt, b.rr] : [b.t, b.v];
+        emgPlot.current!.setData(d as uPlot.AlignedData, false);
         emgPlot.current!.setScale("x", { min, max: tNow });
       });
       if (motionPlot.current) {
@@ -238,7 +345,16 @@ export function LiveRecorder({
         const recent = n ? b.v.slice(Math.max(0, n - 6)) : [];
         const r = rec.current;
         let max = 0;
-        for (const x of b.v) if (x > max) max = x;
+        let clips = 0;
+        let lastSec = 0;
+        for (let i = 0; i < n; i++) {
+          if (b.t[i] < tNow - windowRef.current) continue;
+          if (b.v[i] > max) max = b.v[i];
+        }
+        for (let i = n - 1; i >= 0 && b.t[i] > tNow - 2; i--) {
+          clips += b.clip[i];
+          lastSec++;
+        }
         setReadout({
           value: recent.length ? recent.reduce((a, x) => a + x, 0) / recent.length : 0,
           max,
@@ -249,6 +365,8 @@ export function LiveRecorder({
           stale: !b.last || now - b.last > 1500,
           sinceConnect: (now - t0.current) / 1000,
           rawLevel: b.rawEma,
+          clipPct: lastSec ? (clips / lastSec) * 100 : 0,
+          setClipPct: statusRef.current === "recording" && r.v.length ? (r.clipped / r.v.length) * 100 : 0,
         });
       }
     };
@@ -260,7 +378,7 @@ export function LiveRecorder({
 
   const resetBuffers = () => {
     t0.current = performance.now();
-    buf.current = { t: [], v: [], ax: [], ay: [], az: [], last: 0, rawEma: 0 };
+    buf.current = emptyBuf();
   };
 
   const finishSet = useCallback((reason?: string) => {
@@ -270,15 +388,22 @@ export function LiveRecorder({
       setNotice({ tone: "warn", text: `${reason ? reason + " " : ""}That set was under ${MIN_SET_S} seconds, so it wasn't kept.` });
       return;
     }
-    const values = resampleUniform(r.t, r.v, SAVE_FS);
+    // With raw EMG, everything goes onto the raw channel's (faster) grid so
+    // all channels share one time axis; otherwise SAVE_FS.
+    const rawFs = buf.current.rawFs;
+    const withRaw = rawFs > 0 && r.rt.length > rawFs * MIN_SET_S * 0.5;
+    const fs = withRaw ? rawFs : SAVE_FS;
+    const grid = { start: r.t[0], n: Math.max(2, Math.floor(dur * fs) + 1) };
+    const values = resampleUniform(r.t, r.v, fs, grid);
+    const raw = withRaw ? resampleUniform(r.rt, r.rv, fs, grid) : undefined;
     // Keep motion only if the accelerometer sent real (non-zero) values.
     const hasRealMotion = r.ax.some((x, i) => x != null && (x !== 0 || r.ay[i] !== 0 || r.az[i] !== 0));
     const motion = hasRealMotion
-        ? { x: resampleUniform(r.t, fillGaps(r.ax), SAVE_FS), y: resampleUniform(r.t, fillGaps(r.ay), SAVE_FS), z: resampleUniform(r.t, fillGaps(r.az), SAVE_FS) }
+        ? { x: resampleUniform(r.t, fillGaps(r.ax), fs, grid), y: resampleUniform(r.t, fillGaps(r.ay), fs, grid), z: resampleUniform(r.t, fillGaps(r.az), fs, grid) }
         : undefined;
     let peak = 0;
     for (const v of values) peak = Math.max(peak, v);
-    const reps = settingsRef.current.stream === "envelope" ? detectReps(values, SAVE_FS).length : r.reps;
+    const reps = settingsRef.current.stream === "envelope" ? detectReps(values, fs).length : r.reps;
     const step = Math.max(1, Math.floor(values.length / 60));
     const preview: number[] = [];
     for (let i = 0; i < values.length; i += step) preview.push(values[i]);
@@ -288,7 +413,10 @@ export function LiveRecorder({
         startedAt: r.startIso,
         durationS: Math.round(dur * 10) / 10,
         values,
+        raw,
+        fs,
         motion,
+        clippedPct: Math.round((r.clipped / Math.max(1, r.v.length)) * 1000) / 10,
         observedRateHz: Math.round(((r.t.length - 1) / dur) * 10) / 10,
         samplesReceived: r.t.length,
         peak,
@@ -312,6 +440,7 @@ export function LiveRecorder({
   const connect = async (kind: "sensor" | "demo", override?: Partial<Settings>) => {
     setNotice(null);
     setHasMotion(false);
+    setRawFs(0);
     resetBuffers();
     if (kind === "demo") {
       conn.current = connectDemo({ onSample: onSampleMotionFlag, onDisconnect });
@@ -383,23 +512,27 @@ export function LiveRecorder({
 
   useEffect(() => () => conn.current?.disconnect(), []);
 
+  // Keyboard zoom for the live chart: + / − change how many seconds are shown.
+  const connectedNow = status === "ready" || status === "recording";
+  useEffect(() => {
+    if (!connectedNow) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (e.metaKey || e.ctrlKey || e.altKey || (el && (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) || el.isContentEditable))) return;
+      const i = WINDOW_STEPS.indexOf(windowRef.current);
+      if (e.key === "+" || e.key === "=") setWindowS(WINDOW_STEPS[Math.max(0, i - 1)]);
+      else if (e.key === "-" || e.key === "_") setWindowS(WINDOW_STEPS[Math.min(WINDOW_STEPS.length - 1, i + 1)]);
+      else return;
+      e.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [connectedNow]);
+
   /* ---------- sets ---------- */
 
   const startSet = () => {
-    rec.current = {
-      start: performance.now(),
-      startIso: new Date().toISOString(),
-      t: [],
-      v: [],
-      ax: [],
-      ay: [],
-      az: [],
-      peak: 0,
-      floor: Infinity,
-      reps: 0,
-      inRep: false,
-      repStart: 0,
-    };
+    rec.current = { ...emptyRec(), start: performance.now(), startIso: new Date().toISOString() };
     setNotice(null);
     statusRef.current = "recording";
     setStatus("recording");
@@ -431,6 +564,7 @@ export function LiveRecorder({
     // 4 significant digits: electrode-level values are often ~0.01 mV.
     const round = (a: Float32Array) => Array.from(a, (x) => Number(x.toPrecision(4)));
     try {
+      if (DEMO) throw new Error(DEMO_MSG);
       const res = await fetch(`/api/record?patient=${encodeURIComponent(patientId)}&as=${as}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -445,7 +579,9 @@ export function LiveRecorder({
           gain: gainFor(settings),
           sets: sets.map((s) => ({
             startedAt: s.startedAt,
-            sampleRateHz: SAVE_FS,
+            sampleRateHz: s.fs,
+            clippedPct: s.clippedPct,
+            raw: s.raw && round(s.raw),
             observedRateHz: s.observedRateHz,
             samplesReceived: s.samplesReceived,
             values: round(s.values),
@@ -474,7 +610,15 @@ export function LiveRecorder({
       cursor: { show: false },
       scales: {
         x: { time: false },
-        y: { range: (_u, mn, mx) => [Math.min(0, mn ?? 0), (mx ?? 0) > 0 ? mx! * 1.1 : 1] },
+        y: {
+          range: (_u, mn, mx) => {
+            if (viewRef.current === "raw") {
+              const m = Math.max(Math.abs(mn ?? 0), Math.abs(mx ?? 0), 1e-3) * 1.1;
+              return [-m, m];
+            }
+            return [Math.min(0, mn ?? 0), (mx ?? 0) > 0 ? mx! * 1.1 : 1];
+          },
+        },
       },
       axes: [
         { ...AXIS, values: (_u, v) => v.map(() => ""), size: 8, ticks: { show: false } },
@@ -483,6 +627,32 @@ export function LiveRecorder({
       series: [{}, { stroke: "#0b63ce", width: 2, fill: "rgba(11,99,206,0.10)", points: { show: false } }],
       legend: { show: false },
       hooks: {
+        draw: [
+          (u: uPlot) => {
+            // The sensor's ceiling: readings can't go above this line.
+            if (viewRef.current !== "envelope") return;
+            const c = ceilingMv(settingsRef.current);
+            const yMax = u.scales.y.max ?? 0;
+            if (c == null || c > yMax) return;
+            const y = u.valToPos(c, "y", true);
+            const ctx = u.ctx;
+            const dpr = devicePixelRatio || 1;
+            ctx.save();
+            ctx.strokeStyle = "rgba(180,35,35,0.75)";
+            ctx.lineWidth = 1.25 * dpr;
+            ctx.setLineDash([5 * dpr, 4 * dpr]);
+            ctx.beginPath();
+            ctx.moveTo(u.bbox.left, y);
+            ctx.lineTo(u.bbox.left + u.bbox.width, y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = "rgba(180,35,35,0.9)";
+            ctx.font = `${11 * dpr}px -apple-system, system-ui, sans-serif`;
+            ctx.textAlign = "right";
+            ctx.fillText(`sensor maximum ${fmtMv(c)} mV`, u.bbox.left + u.bbox.width - 6 * dpr, y + 13 * dpr);
+            ctx.restore();
+          },
+        ],
         drawAxes: [
           (u: uPlot) => {
             // Shade the part of the window that belongs to the set being recorded.
@@ -672,16 +842,59 @@ export function LiveRecorder({
               </dl>
             </div>
 
-            <div className="px-2 pt-3 sm:px-3">
+            {!readout.stale && readout.clipPct > 5 && !(settings.scale === "adc12" && readout.rawLevel > 3800) && (
+              <div className="mx-5 mt-4 flex items-start gap-2 rounded-xl bg-warn-soft px-3 py-2.5 text-[13px] text-warn sm:mx-6" role="status">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <p>
+                  {plain
+                    ? "Your muscle signal is going off the top of the sensor’s scale, so the strongest part is being cut off. Ask your clinician to turn the sensor’s gain knob down a little."
+                    : `The envelope is hitting the sensor’s maximum (${fmtMv(ceilingMv(settings) ?? 0)} mV at a ${settings.gainKnobK} kΩ gain setting), so peaks are cut off. Turn the MyoWare gain knob down until a full contraction stays below the dashed line, then update “Gain knob” in Advanced sensor settings.${hasRaw ? " The raw and rectified channels have a fixed 200× gain and are not affected." : ""}`}
+                </p>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 pt-4 sm:px-6">
+              {hasRaw && (
+                <Segmented
+                  label="Live channel"
+                  size="sm"
+                  value={liveView}
+                  onChange={setLiveView}
+                  options={[
+                    { value: "envelope", label: plain ? "Effort" : "Envelope" },
+                    { value: "rectified", label: "Rectified" },
+                    { value: "raw", label: plain ? "Raw signal" : "Raw EMG" },
+                  ]}
+                />
+              )}
+              <label className="ml-auto flex min-w-[220px] items-center gap-2 text-[12px] text-ink-2">
+                <span className="shrink-0">Show last</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={WINDOW_STEPS.length - 1}
+                  value={WINDOW_STEPS.indexOf(windowS)}
+                  onChange={(e) => setWindowS(WINDOW_STEPS[Number(e.target.value)])}
+                  className="zoom-range flex-1"
+                  aria-valuetext={`${windowS} seconds`}
+                />
+                <span className="w-9 shrink-0 text-right font-medium text-ink tabular">{windowS} s</span>
+              </label>
+            </div>
+
+            <div className="px-2 pt-2 sm:px-3">
               <UChart
                 options={emgOptions}
                 data={emptyEmg}
                 height={240}
-                ariaLabel={`Live muscle signal, last ${WINDOW_S} seconds`}
+                ariaLabel={`Live muscle signal, last ${windowS} seconds`}
                 onCreate={(u) => (emgPlot.current = u)}
               />
               <div className="flex justify-between px-3 pb-1 pl-[68px] text-[11px] text-ink-3">
-                <span>−{WINDOW_S} s</span>
+                <span>−{windowS} s</span>
+                <span className="hidden sm:inline">
+                  <kbd>+</kbd> <kbd>−</kbd> to zoom
+                </span>
                 <span>now</span>
               </div>
             </div>
@@ -738,7 +951,7 @@ export function LiveRecorder({
             subtitle={
               plain
                 ? "Nothing is stored until you press Save. Remove a set if something went wrong."
-                : `Not stored yet. Each set is resampled to ${SAVE_FS} Hz and analysed on save.`
+                : `Not stored yet. Each set is resampled to ${hasRaw ? `the raw channel’s rate (${rawFs} Hz)` : `${SAVE_FS} Hz`} and analysed on save.`
             }
           />
           <ul className="mt-3 divide-y divide-line border-t border-line">
@@ -746,7 +959,11 @@ export function LiveRecorder({
               <li key={s.startedAt} className="flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 sm:px-6">
                 <span className="inline-flex size-8 items-center justify-center rounded-full bg-brand-soft text-[13px] font-semibold text-brand-strong">{i + 1}</span>
                 <Sparkline values={s.preview} width={120} height={30} />
-                <div className="grid flex-1 grid-cols-3 gap-3 text-[13px]">
+                <div className="grid flex-1 grid-cols-4 gap-3 text-[13px]">
+                  <span>
+                    <span className="block text-ink-3">Started</span>
+                    <b className="tabular">{new Date(s.startedAt).toLocaleTimeString("en-CA", { hour: "numeric", minute: "2-digit", second: "2-digit" })}</b>
+                  </span>
                   <span>
                     <span className="block text-ink-3">Length</span>
                     <b className="tabular">{fmtClock(s.durationS)}</b>
@@ -760,7 +977,17 @@ export function LiveRecorder({
                     <b className="tabular">{fmtMv(s.peak)} mV</b>
                   </span>
                 </div>
-                {!plain && <span className="text-[12px] text-ink-3 tabular">{s.observedRateHz} Hz received{s.motion ? " · + motion" : ""}</span>}
+                {s.clippedPct >= 2 && (
+                  <Badge tone="warn">
+                    <span title="Share of readings at the sensor’s maximum">{s.clippedPct}% at max</span>
+                  </Badge>
+                )}
+                {!plain && (
+                  <span className="text-[12px] text-ink-3 tabular">
+                    {s.observedRateHz} Hz received{s.raw ? ` · + raw ${s.fs} Hz` : ""}
+                    {s.motion ? " · + motion" : ""}
+                  </span>
+                )}
                 <button
                   type="button"
                   className={cx(btn.ghost, btn.small, "text-bad hover:bg-bad-soft")}

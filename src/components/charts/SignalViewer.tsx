@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type uPlot from "uplot";
-import { Info, Lock, RotateCcw, ZoomIn } from "lucide-react";
+import { Info, Lock, ZoomIn } from "lucide-react";
 import { CHANNELS, type ChannelKey } from "@/lib/types";
 import { detectReps, useSignal, type ClientSignal } from "@/lib/client-signal";
 import { Segmented } from "../Segmented";
-import { btn, cx } from "../ui";
+import { cx } from "../ui";
 import { AXIS, UChart, fmtNum } from "./UChart";
+import { ZoomBar, fmtSpan, useChartZoom } from "./zoom";
 
 type View = ChannelKey | "all";
 
@@ -46,6 +47,11 @@ export function SignalViewer({
   const effectiveView: View = envelopeOnly ? "envelope" : view;
   const channelsShown: ChannelKey[] = effectiveView === "all" ? ["envelope", "rectified", "raw"] : [effectiveView];
   const locked = !hasRaw && channelsShown.some((c) => c !== "envelope");
+  const duration = data ? data.n / data.fs : 0;
+  const domain = useMemo<[number, number]>(() => [0, duration], [duration]);
+  // Closest zoom: ~50 samples on screen, never under 0.1 s.
+  const minSpan = data ? Math.max(0.1, 50 / data.fs) : 1;
+  const { wrapperProps: zoomProps, wheelTarget: zoomTarget } = useChartZoom({ domain, view: range, setView: setRange, minSpan, enabled: !!data });
 
   return (
     <div>
@@ -60,17 +66,11 @@ export function SignalViewer({
             </span>
           )
         )}
-        <div className="ml-auto flex items-center gap-1.5">
-          {range ? (
-            <button type="button" className={cx(btn.ghost, btn.small)} onClick={() => setRange(null)}>
-              <RotateCcw className="size-3.5" aria-hidden /> Full set
-            </button>
-          ) : (
-            <span className="hidden items-center gap-1 text-[12px] text-ink-3 md:inline-flex">
-              <ZoomIn className="size-3.5" aria-hidden /> Drag across the chart to zoom
-            </span>
-          )}
-        </div>
+        {!range && (
+          <span className="ml-auto hidden items-center gap-1 text-[12px] text-ink-3 md:inline-flex">
+            <ZoomIn className="size-3.5" aria-hidden /> Drag across the chart to zoom
+          </span>
+        )}
       </div>
 
       {reps.length > 0 && (
@@ -95,7 +95,7 @@ export function SignalViewer({
         </div>
       )}
 
-      <div className="px-2 sm:px-3">
+      <div className="px-2 sm:px-3" {...zoomProps} ref={zoomTarget}>
         {error && <p className="px-3 py-10 text-center text-sm text-bad">Could not load signal: {error}</p>}
         {!data && !error && <div className="mx-3 h-[260px] animate-pulse rounded-xl bg-canvas" />}
         {data && locked && (
@@ -107,8 +107,11 @@ export function SignalViewer({
         {data && !locked && (
           <StackedCharts data={data} channels={channelsShown} range={range} setRange={setRange} reps={reps} />
         )}
-        {data?.motion && <MotionChart data={data} motion={data.motion} plain={plain} />}
+        {data?.motion && <MotionChart data={data} motion={data.motion} plain={plain} range={range} />}
       </div>
+      {data && (
+        <ZoomBar domain={domain} view={range} setView={setRange} minSpan={minSpan} format={fmtSpan} className="px-5 pt-3 sm:px-6" />
+      )}
 
       <div className="grid gap-3 px-5 pb-5 pt-2 sm:px-6 md:grid-cols-3">
         {channelsShown.map((c) => (
@@ -291,7 +294,24 @@ function ChannelChart({
 const MOTION_COLORS = ["#2a78d6", "#eb6834", "#1baf7a"];
 
 /** Accelerometer x/y/z (g) recorded alongside the EMG, on the same time axis. */
-function MotionChart({ data, motion, plain }: { data: ClientSignal; motion: NonNullable<ClientSignal["motion"]>; plain: boolean }) {
+function MotionChart({
+  data,
+  motion,
+  plain,
+  range,
+}: {
+  data: ClientSignal;
+  motion: NonNullable<ClientSignal["motion"]>;
+  plain: boolean;
+  range: [number, number] | null;
+}) {
+  const plot = useRef<uPlot | null>(null);
+  const rangeRef = useRef(range);
+  useEffect(() => {
+    rangeRef.current = range;
+    const u = plot.current;
+    if (u?.root.isConnected) u.setScale("x", range ? { min: range[0], max: range[1] } : { min: 0, max: motion.x.length / data.fs });
+  }, [range, motion, data.fs]);
   const aligned = useMemo(() => {
     const x = new Float64Array(motion.x.length);
     for (let i = 0; i < x.length; i++) x[i] = i / data.fs;
@@ -327,7 +347,18 @@ function MotionChart({ data, motion, plain }: { data: ClientSignal; motion: NonN
           </span>
         ))}
       </div>
-      <UChart options={options} data={aligned} height={150} tooltip={tooltip} ariaLabel="Accelerometer x, y and z over time" />
+      <UChart
+        options={options}
+        data={aligned}
+        height={150}
+        tooltip={tooltip}
+        ariaLabel="Accelerometer x, y and z over time"
+        onCreate={(u) => {
+          plot.current = u;
+          const r = rangeRef.current;
+          if (r) u.setScale("x", { min: r[0], max: r[1] });
+        }}
+      />
     </div>
   );
 }

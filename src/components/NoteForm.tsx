@@ -2,11 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { addNoteAction } from "@/app/actions";
+import { DEMO } from "@/lib/demo";
 import { btn, cx } from "./ui";
 
 export function NoteForm({ patientId, sessionId }: { patientId: string; sessionId: string }) {
   const [text, setText] = useState("");
   const [pending, start] = useTransition();
+  if (DEMO) return <p className="mt-4 text-[13px] text-ink-3">Notes can’t be added in the read-only demo.</p>;
   return (
     <form
       className="mt-4 flex gap-2"
