@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type React from "react";
 import type { ComponentProps, ReactNode } from "react";
-import { ArrowDownRight, ArrowUpRight, ChevronRight, Minus, Sparkles, TrendingDown } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, ChevronDown, ChevronRight, Minus, Sparkles, TrendingDown } from "lucide-react";
 import type { Status } from "@/lib/analytics";
 
 export function cx(...xs: (string | false | null | undefined)[]) {
@@ -216,6 +216,32 @@ export function DepthLadder({ level }: { level: 0 | 1 | 2 | 3 }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * Progressive disclosure: keeps detail one tap away without crowding the page.
+ * Native <details>, so it is keyboard- and screen-reader-accessible with no JS.
+ */
+export function Disclosure({
+  summary,
+  children,
+  className,
+  defaultOpen,
+}: {
+  summary: ReactNode;
+  children: ReactNode;
+  className?: string;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details open={defaultOpen} className={cx("group", className)}>
+      <summary className="pressable inline-flex min-h-9 cursor-pointer list-none items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-brand hover:bg-brand-soft [&::-webkit-details-marker]:hidden">
+        <ChevronDown className="size-4 transition-transform group-open:rotate-180" aria-hidden />
+        {summary}
+      </summary>
+      <div className="fade-in pt-3">{children}</div>
+    </details>
   );
 }
 

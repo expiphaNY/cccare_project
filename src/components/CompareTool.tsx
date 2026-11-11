@@ -6,7 +6,7 @@ import { Check, ChevronDown, Layers, Sparkles, X } from "lucide-react";
 import { detectReps, fetchSignal, resample, type ClientSignal } from "@/lib/client-signal";
 import { Segmented } from "./Segmented";
 import { AXIS, SERIES_COLORS, UChart, fmtNum, swatch } from "./charts/UChart";
-import { Card, cx } from "./ui";
+import { Card, Disclosure, cx } from "./ui";
 
 export interface CompareRecording {
   id: string;
@@ -45,6 +45,7 @@ export function CompareTool({
   initialIds?: string[];
 }) {
   const plain = audience !== "clinician";
+  const simple = audience === "patient";
   const [exercise, setExercise] = useState(initialExercise ?? exercises[0]?.key);
   const [selected, setSelected] = useState<{ id: string; slot: number }[]>(() =>
     (initialIds ?? []).slice(0, MAX).map((id, slot) => ({ id, slot })),
@@ -266,6 +267,42 @@ export function CompareTool({
   const last = ordered[ordered.length - 1]?.rec;
   const exName = exercises.find((e) => e.key === exercise)?.name ?? "";
 
+const controls = (
+          <div className="flex flex-wrap items-center gap-2 px-5 pb-3 pt-3 sm:px-6">
+            <Segmented
+              label="Channel"
+              size="sm"
+              value={channel}
+              onChange={setChannel}
+              options={[
+                { value: "envelope", label: plain ? "Effort (envelope)" : "Envelope" },
+                { value: "rectified", label: "Rectified" },
+                { value: "raw", label: plain ? "Raw signal" : "Raw EMG" },
+              ]}
+            />
+            <Segmented
+              label="Time window"
+              size="sm"
+              value={mode}
+              onChange={setMode}
+              options={[
+                { value: "rep", label: plain ? "One typical rep" : "Average rep", title: "Reps aligned at onset and averaged (raw: strongest rep)" },
+                { value: "set", label: "Whole set" },
+              ]}
+            />
+            <Segmented
+              label="Scale"
+              size="sm"
+              value={scale}
+              onChange={setScale}
+              options={[
+                { value: "abs", label: "mV" },
+                { value: "rel", label: plain ? "% of first" : "% of first", title: "Normalised to the earliest selection's peak" },
+              ]}
+            />
+          </div>
+  );
+
   return (
     <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
       {/* ---------- Picker ---------- */}
@@ -419,39 +456,15 @@ export function CompareTool({
               </h2>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 px-5 pb-3 pt-3 sm:px-6">
-            <Segmented
-              label="Channel"
-              size="sm"
-              value={channel}
-              onChange={setChannel}
-              options={[
-                { value: "envelope", label: plain ? "Effort (envelope)" : "Envelope" },
-                { value: "rectified", label: "Rectified" },
-                { value: "raw", label: plain ? "Raw signal" : "Raw EMG" },
-              ]}
-            />
-            <Segmented
-              label="Time window"
-              size="sm"
-              value={mode}
-              onChange={setMode}
-              options={[
-                { value: "rep", label: plain ? "One typical rep" : "Average rep", title: "Reps aligned at onset and averaged (raw: strongest rep)" },
-                { value: "set", label: "Whole set" },
-              ]}
-            />
-            <Segmented
-              label="Scale"
-              size="sm"
-              value={scale}
-              onChange={setScale}
-              options={[
-                { value: "abs", label: "mV" },
-                { value: "rel", label: plain ? "% of first" : "% of first", title: "Normalised to the earliest selection's peak" },
-              ]}
-            />
-          </div>
+          {simple ? (
+            <div className="px-5 pb-2 pt-1 sm:px-6">
+              <Disclosure summary="Display options">
+                {controls}
+              </Disclosure>
+            </div>
+          ) : (
+            controls
+          )}
 
           {/* Legend: always present, chronological, hover to focus */}
           {ordered.length > 0 && (
@@ -509,7 +522,7 @@ export function CompareTool({
           </div>
         </Card>
 
-        {ordered.length > 0 && <ComparisonTable ordered={ordered} plain={plain} />}
+        {ordered.length > 0 && <ComparisonTable ordered={ordered} plain={plain} simple={simple} />}
       </div>
     </div>
   );
@@ -518,9 +531,11 @@ export function CompareTool({
 function ComparisonTable({
   ordered,
   plain,
+  simple,
 }: {
   ordered: { id: string; slot: number; rec: CompareRecording }[];
   plain: boolean;
+  simple: boolean;
 }) {
   const first = ordered[0].rec;
   const last = ordered[ordered.length - 1].rec;
@@ -558,15 +573,19 @@ function ComparisonTable({
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[620px] text-sm">
+        <table className={cx("w-full text-sm", simple ? "min-w-[360px]" : "min-w-[620px]")}>
           <thead>
             <tr className="text-left text-[12px] text-ink-2">
               <th className="px-5 py-3 font-medium sm:px-6">Recording</th>
               <th className="px-3 py-3 text-right font-medium">{plain ? "Strongest effort" : "Peak"}</th>
-              <th className="px-3 py-3 text-right font-medium">vs first</th>
-              <th className="px-3 py-3 text-right font-medium">{plain ? "Average effort" : "Mean"}</th>
-              <th className="px-3 py-3 text-right font-medium" title="Median frequency">{plain ? "Freshness" : "MDF"}</th>
-              <th className="px-5 py-3 text-right font-medium sm:px-6" title="Last reps vs first reps">{plain ? "Effort drop" : "Fatigue idx"}</th>
+              <th className={cx("py-3 text-right font-medium", simple ? "px-5 sm:px-6" : "px-3")}>vs first</th>
+              {!simple && (
+                <>
+                  <th className="px-3 py-3 text-right font-medium">{plain ? "Average effort" : "Mean"}</th>
+                  <th className="px-3 py-3 text-right font-medium" title="Median frequency">{plain ? "Freshness" : "MDF"}</th>
+                  <th className="px-5 py-3 text-right font-medium sm:px-6" title="Last reps vs first reps">{plain ? "Effort drop" : "Fatigue idx"}</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -582,12 +601,16 @@ function ComparisonTable({
                     </span>
                   </td>
                   <td className="px-3 py-3 text-right tabular">{s.rec.peak.toFixed(3)} mV</td>
-                  <td className={cx("px-3 py-3 text-right font-medium tabular", i === 0 ? "text-ink-3" : c > 0.5 ? "text-good" : c < -0.5 ? "text-bad" : "text-ink-2")}>
+                  <td className={cx("py-3 text-right font-medium tabular", simple ? "px-5 sm:px-6" : "px-3", i === 0 ? "text-ink-3" : c > 0.5 ? "text-good" : c < -0.5 ? "text-bad" : "text-ink-2")}>
                     {i === 0 ? "reference" : `${c > 0 ? "+" : ""}${c.toFixed(1)}%`}
                   </td>
-                  <td className="px-3 py-3 text-right tabular">{s.rec.mean.toFixed(3)} mV</td>
-                  <td className="px-3 py-3 text-right tabular">{s.rec.mdf.toFixed(0)} Hz</td>
-                  <td className="px-5 py-3 text-right tabular sm:px-6">{s.rec.fatigue.toFixed(0)}%</td>
+                  {!simple && (
+                    <>
+                      <td className="px-3 py-3 text-right tabular">{s.rec.mean.toFixed(3)} mV</td>
+                      <td className="px-3 py-3 text-right tabular">{s.rec.mdf.toFixed(0)} Hz</td>
+                      <td className="px-5 py-3 text-right tabular sm:px-6">{s.rec.fatigue.toFixed(0)}%</td>
+                    </>
+                  )}
                 </tr>
               );
             })}

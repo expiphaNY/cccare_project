@@ -62,9 +62,19 @@ export function AccessLog({
 }) {
   const shown = limit ? events.slice(0, limit) : events;
   const groups = new Map<string, AuditEvent[]>();
+  // Patients get runs of identical events (same person, same action) merged into one row with a count.
+  const merge = audience === "patient";
+  const counts = new Map<string, { n: number; first: string }>();
   for (const e of shown) {
     const k = fmtDate(e.at);
-    groups.set(k, [...(groups.get(k) ?? []), e]);
+    const list = groups.get(k) ?? [];
+    const prev = list[list.length - 1];
+    if (merge && prev && prev.action === e.action && prev.actor.role === e.actor.role && prev.actor.name === e.actor.name) {
+      const c = counts.get(prev.id) ?? { n: 1, first: prev.at };
+      counts.set(prev.id, { n: c.n + 1, first: e.at });
+      continue;
+    }
+    groups.set(k, [...list, e]);
   }
   return (
     <ol className="space-y-5">
@@ -92,7 +102,14 @@ export function AccessLog({
                     <Badge tone={role.tone} className="!py-0 text-[11px]">
                       {role.label}
                     </Badge>
-                    <span className="ml-auto text-[12px] text-ink-3 tabular">{fmtTime(e.at)}</span>
+                    {counts.get(e.id) && (
+                      <Badge className="!py-0 text-[11px]" title="The same thing happened several times in a row">
+                        ×{counts.get(e.id)!.n}
+                      </Badge>
+                    )}
+                    <span className="ml-auto text-[12px] text-ink-3 tabular">
+                      {counts.get(e.id) ? `${fmtTime(counts.get(e.id)!.first)}–${fmtTime(e.at)}` : fmtTime(e.at)}
+                    </span>
                   </div>
                   <p className="text-[13px] text-ink-2">{e.detail}</p>
                 </li>

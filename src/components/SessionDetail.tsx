@@ -9,7 +9,7 @@ import { EXERCISES } from "@/lib/types";
 import { SignalViewer } from "./charts/SignalViewer";
 import { RepBars } from "./charts/Sparkline";
 import { NoteForm } from "./NoteForm";
-import { Badge, Card, CardHeader, DepthLadder, cx } from "./ui";
+import { Badge, Card, CardHeader, DepthLadder, Disclosure, KeyValue, cx } from "./ui";
 
 /**
  * Session → set → raw signal. Shared by clinician and patient views; the
@@ -57,18 +57,22 @@ export function SessionDetail({
               {session.location === "clinic" ? <MapPin className="size-3" aria-hidden /> : <Home className="size-3" aria-hidden />}
               {session.location === "clinic" ? `Clinic${clin ? ` · ${clin.name}` : ""}` : "Home exercise"}
             </Badge>
-            <Badge>
-              Session {idx + 1} of {sessions.length}
-            </Badge>
+            {!plain && (
+              <Badge>
+                Session {idx + 1} of {sessions.length}
+              </Badge>
+            )}
             {session.painScore != null && <Badge tone={session.painScore >= 5 ? "warn" : "neutral"}>Pain {session.painScore}/10</Badge>}
           </div>
           <p className="mt-1 text-sm text-ink-2">
-            Started {fmtTime(session.startedAt)} · {recs.length} set{recs.length === 1 ? "" : "s"} recorded by {recs[0]?.source === "ble" ? recs[0].deviceId : patient.device.id}
+            {plain
+              ? `Started ${fmtTime(session.startedAt)} · ${recs.length} set${recs.length === 1 ? "" : "s"}`
+              : `Started ${fmtTime(session.startedAt)} · ${recs.length} set${recs.length === 1 ? "" : "s"} recorded by ${recs[0]?.source === "ble" ? recs[0].deviceId : patient.device.id}`}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <DepthLadder level={selectedId ? 3 : 1} />
-          <nav className="ml-2 flex gap-1" aria-label="Session navigation">
+          {!plain && <DepthLadder level={selectedId ? 3 : 1} />}
+          <nav className="flex gap-1" aria-label="Session navigation">
             <NavBtn href={prev ? `${baseHref}/${prev.id}` : undefined} label="Previous session">
               <ChevronLeft className="size-4" aria-hidden />
             </NavBtn>
@@ -125,7 +129,7 @@ export function SessionDetail({
         <>
           <Card>
             <CardHeader
-              eyebrow={`Set ${selected.setNumber} · ${fmtTime(selected.recordedAt)} · ${selected.durationS}s @ ${selected.sampleRateHz} Hz`}
+              eyebrow={plain ? `Set ${selected.setNumber} · ${fmtTime(selected.recordedAt)}` : `Set ${selected.setNumber} · ${fmtTime(selected.recordedAt)} · ${selected.durationS}s @ ${selected.sampleRateHz} Hz`}
               title={`${EXERCISES[selected.exercise].name} — ${plain ? "your muscle signal" : "signal"}`}
               subtitle={
                 plain
@@ -184,6 +188,25 @@ export function SessionDetail({
               </div>
             </Card>
           </div>
+
+          {plain && (
+            <div className="-mt-2">
+              <Disclosure summary="About this recording">
+                <Card className="p-5 sm:p-6">
+                  <KeyValue
+                    items={[
+                      { k: "Exercise", v: `${EXERCISES[selected.exercise].name} · set ${selected.setNumber}` },
+                      { k: "Recorded", v: `${fmtDate(selected.recordedAt)} at ${fmtTime(selected.recordedAt)}` },
+                      { k: "Length", v: `${selected.durationS} seconds, ${selected.metrics.repsDetected} repetitions` },
+                      { k: "Sensor", v: selected.deviceId },
+                      { k: "Detail", v: `${selected.sampleRateHz} readings per second, in ${selected.units}` },
+                      { k: "Recording ID", v: <span className="font-mono text-[13px]">{selected.id}</span> },
+                    ]}
+                  />
+                </Card>
+              </Disclosure>
+            </div>
+          )}
 
           {audience === "clinician" && rawPreview && (
             <Card>

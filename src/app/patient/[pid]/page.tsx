@@ -1,14 +1,15 @@
 import Link from "next/link";
+import type { LucideIcon } from "lucide-react";
 import { notFound } from "next/navigation";
-import { Activity, ArrowRight, CalendarCheck, Eye, Flag, HeartPulse, Layers, MessageSquareText, ShieldCheck } from "lucide-react";
+import { Activity, ArrowRight, CalendarCheck, Flag, HeartPulse, Layers, MessageSquareText, ShieldCheck } from "lucide-react";
 import { ExerciseCards } from "@/components/ExerciseCards";
 import { TrendPanel } from "@/components/charts/TrendPanel";
 import { WhoCanSee } from "@/components/transparency";
-import { Card, CardHeader, cx } from "@/components/ui";
+import { Card, CardHeader, Disclosure, cx } from "@/components/ui";
 import { sessionsPerWeek } from "@/lib/analytics";
 import { accessSummary, getPatientBundle, patientActor, logAccess, clinicianById } from "@/lib/data";
 import { shouldLog } from "@/lib/access";
-import { fmtDateTime, fmtShortDate, fmtTime, msSince, relTime } from "@/lib/format";
+import { fmtShortDate, fmtTime, msSince, relTime } from "@/lib/format";
 import { getStore } from "@/lib/store";
 import { EXERCISES } from "@/lib/types";
 import { summaries, trendProps } from "@/lib/viewmodels";
@@ -51,6 +52,8 @@ export default async function PatientHome({ params }: PageProps<"/patient/[pid]"
     };
   })();
 
+  const others = who.people.filter((x) => x.kind !== "you");
+
   return (
     <div className="space-y-6">
       <section className="relative overflow-hidden rounded-[26px] bg-gradient-to-br from-[#0b63ce] via-[#1f74da] to-[#3d8ef0] px-6 py-8 text-white shadow-[var(--shadow-card)] sm:px-10 sm:py-10">
@@ -65,87 +68,65 @@ export default async function PatientHome({ params }: PageProps<"/patient/[pid]"
           <Link href={`${base}/compare`} className="pressable inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white/15 px-4 text-sm font-medium text-white hover:bg-white/25">
             <Layers className="size-4" aria-hidden /> See start vs now
           </Link>
-          <Link href={`${base}/sessions`} className="pressable inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white/15 px-4 text-sm font-medium text-white hover:bg-white/25">
-            All sessions <ArrowRight className="size-4" aria-hidden />
-          </Link>
         </div>
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className={cx("grid gap-4", pain.length ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
         <MiniStat Icon={CalendarCheck} label="Sessions done" value={String(sessions.length)} sub={`${sessionsPerWeek(sessions).toFixed(1)} per week`} />
-        <MiniStat
-          Icon={HeartPulse}
-          label="Pain before exercise"
-          value={pain.length ? `${pain[0].painScore} → ${pain[pain.length - 1].painScore}` : "–"}
-          sub="Out of 10, from your check-ins"
-        />
+        {pain.length > 0 && (
+          <MiniStat Icon={HeartPulse} label="Pain before exercise" value={`${pain[0].painScore} → ${pain[pain.length - 1].painScore}`} sub="Out of 10, from your check-ins" />
+        )}
         <MiniStat Icon={Flag} label="Your goal" value="" sub={p.goal} />
-        <MiniStat
-          Icon={Eye}
-          label="Last viewed by someone else"
-          value={lastOther ? relTime(lastOther.at) : "Never"}
-          sub={lastOther ? lastOther.actor.name : "Only you so far"}
-          href={`${base}/privacy`}
-        />
       </div>
 
-      <ExerciseCards summaries={sums} compareHref={`${base}/compare`} audience="patient" />
+      {lastNote && (
+        <Card className="p-5 sm:p-6">
+          <div className="flex gap-3">
+            <MessageSquareText className="mt-0.5 size-5 shrink-0 text-brand" aria-hidden />
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-ink-2">Latest note from {clin ? clin.name : "your clinician"}</p>
+              <p className="mt-1 whitespace-pre-line text-[15px] leading-relaxed">{lastNote.notes}</p>
+              <Link href={`${base}/sessions/${lastNote.id}`} className="mt-1.5 inline-block text-[12px] font-medium text-brand hover:underline">
+                From your session on {fmtShortDate(lastNote.startedAt)} at {fmtTime(lastNote.startedAt)}
+              </Link>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <ExerciseCards summaries={sums} audience="patient" />
 
       {sessions.length > 0 && (
         <Card>
-          <CardHeader
-            title="Your progress"
-            subtitle="Each dot is one session — your strongest set. Higher means your muscle is switching on more strongly. Tap a dot to see that day."
-          />
+          <CardHeader title="Your progress" subtitle="Each dot is one session — your strongest set. Higher means a stronger muscle signal. Tap a dot to open that day." />
           <div className="pt-3">
             <TrendPanel {...trendProps(p, recordings, ["peakEnvelope"], sessions)} audience="patient" sessionHref={`${base}/sessions`} />
           </div>
         </Card>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader
-            eyebrow="Your data"
-            title="Who can see your data right now"
-            action={
-              <Link href={`${base}/privacy`} className="inline-flex items-center gap-1 text-[13px] font-medium text-brand hover:underline">
-                Manage <ArrowRight className="size-3.5" aria-hidden />
-              </Link>
-            }
-          />
-          <div className="px-5 pb-5 pt-4 sm:px-6">
-            <WhoCanSee people={who.people} />
-            <p className="mt-4 flex items-start gap-2 rounded-xl bg-brand-tint px-3 py-2.5 text-[13px] text-ink-2">
-              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
-              Nobody else can see it. Every time someone opens your record, it shows up in your access log.
+      {/* Transparency stays on the home page, but as one quiet line with the detail a tap away. */}
+      <Card className="p-5 sm:p-6">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand">
+            <ShieldCheck className="size-[18px]" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[15px] font-medium">
+              {others.length === 0 ? "Only you can see your data." : `${others.length} ${others.length === 1 ? "person" : "people"} besides you can see your data.`}
+            </p>
+            <p className="text-[13px] text-ink-2">
+              {lastOther ? `Last viewed by ${lastOther.actor.name} ${relTime(lastOther.at)}.` : "Nobody else has opened it yet."} Every view is logged.
             </p>
           </div>
-        </Card>
-        <Card>
-          <CardHeader eyebrow="From your clinician" title={clin ? clin.name : "Your clinician"} />
-          <div className="px-5 pb-5 pt-4 sm:px-6">
-            {lastNote ? (
-              <div className="flex gap-3">
-                <MessageSquareText className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
-                <div>
-                  <p className="whitespace-pre-line text-[15px] leading-relaxed">{lastNote.notes}</p>
-                  <Link href={`${base}/sessions/${lastNote.id}`} className="mt-1 inline-block text-[12px] font-medium text-brand hover:underline">
-                    From your session on {fmtShortDate(lastNote.startedAt)} at {fmtTime(lastNote.startedAt)}
-                  </Link>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-ink-2">No notes yet.</p>
-            )}
-            {sessions.length > 0 && (
-              <p className="mt-5 border-t border-line pt-4 text-[13px] text-ink-2">
-                Last session: <b className="text-ink">{fmtDateTime(sessions[sessions.length - 1].startedAt)}</b>
-              </p>
-            )}
-          </div>
-        </Card>
-      </div>
+          <Link href={`${base}/privacy`} className="inline-flex items-center gap-1 text-[13px] font-medium text-brand hover:underline">
+            Manage <ArrowRight className="size-3.5" aria-hidden />
+          </Link>
+        </div>
+        <Disclosure summary="Who can see it" className="mt-2 -mb-1">
+          <WhoCanSee people={who.people} />
+        </Disclosure>
+      </Card>
     </div>
   );
 }
@@ -157,7 +138,7 @@ function MiniStat({
   sub,
   href,
 }: {
-  Icon: typeof Eye;
+  Icon: LucideIcon;
   label: string;
   value: string;
   sub: string;

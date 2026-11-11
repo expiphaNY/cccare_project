@@ -3,6 +3,7 @@ import { ChevronRight, Home, MapPin, NotebookPen } from "lucide-react";
 import { fmtDate, fmtTime } from "@/lib/format";
 import type { Patient, Recording, Session } from "@/lib/types";
 import { EXERCISES } from "@/lib/types";
+import { cx } from "./ui";
 
 export function SessionsTable({
   patient,
@@ -17,6 +18,7 @@ export function SessionsTable({
   baseHref: string;
   audience: "clinician" | "patient";
 }) {
+  const simple = audience === "patient";
   const ordered = [...sessions].reverse();
   const bestFor = (sid: string, ex: string) => {
     const r = recordings.filter((x) => x.sessionId === sid && x.exercise === ex);
@@ -27,18 +29,18 @@ export function SessionsTable({
   );
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-sm">
+      <table className={cx("w-full text-sm", simple ? "min-w-[520px]" : "min-w-[760px]")}>
         <thead>
           <tr className="border-b border-line text-left text-[12px] text-ink-2">
-            <th className="px-5 py-3 font-medium sm:px-6">#</th>
-            <th className="px-3 py-3 font-medium">Date & time</th>
+            {!simple && <th className="px-5 py-3 font-medium sm:px-6">#</th>}
+            <th className={cx("py-3 font-medium", simple ? "px-5 sm:px-6" : "px-3")}>Date & time</th>
             <th className="px-3 py-3 font-medium">Where</th>
             {patient.exercises.map((ex) => (
               <th key={ex} className="px-3 py-3 font-medium">
                 {EXERCISES[ex].name} <span className="font-normal text-ink-3">{audience === "patient" ? "strongest effort" : "peak"}</span>
               </th>
             ))}
-            <th className="px-3 py-3 font-medium">Sets</th>
+            {!simple && <th className="px-3 py-3 font-medium">Sets</th>}
             <th className="px-3 py-3 font-medium">Pain</th>
             <th className="w-10" />
           </tr>
@@ -46,8 +48,8 @@ export function SessionsTable({
         <tbody>
           {ordered.map((s, i) => (
             <tr key={s.id} className="group relative border-b border-line last:border-0 hover:bg-brand-tint/60">
-              <td className="px-5 py-3 text-ink-3 tabular sm:px-6">{sessions.length - i}</td>
-              <td className="px-3 py-3">
+              {!simple && <td className="px-5 py-3 text-ink-3 tabular sm:px-6">{sessions.length - i}</td>}
+              <td className={cx("py-3", simple ? "px-5 sm:px-6" : "px-3")}>
                 <Link href={`${baseHref}/${s.id}`} className="after:absolute after:inset-0">
                   <span className="block font-medium tabular">{fmtDate(s.startedAt)}</span>
                   <span className="block text-[12px] text-ink-2">{fmtTime(s.startedAt)}</span>
@@ -77,7 +79,7 @@ export function SessionsTable({
                   </td>
                 );
               })}
-              <td className="px-3 py-3 tabular text-ink-2">{recordings.filter((r) => r.sessionId === s.id).length}</td>
+              {!simple && <td className="px-3 py-3 tabular text-ink-2">{recordings.filter((r) => r.sessionId === s.id).length}</td>}
               <td className="px-3 py-3 tabular text-ink-2">{s.painScore ?? "–"}</td>
               <td className="px-3 py-3 text-ink-3">
                 <ChevronRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />

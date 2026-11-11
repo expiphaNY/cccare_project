@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Clock, Database, FileQuestion, Lock, MapPin, Scale } from "lucide-react";
+import { Database, FileQuestion, Lock, MapPin, Scale } from "lucide-react";
 import { ShareDialog } from "@/components/ShareDialog";
 import { AccessLog, DataFlow, SharesTable, SignalExplainer, WhoCanSee } from "@/components/transparency";
 import { ConsentToggles, DeleteProfile, ExportLinks } from "@/components/privacy";
-import { Card, CardHeader } from "@/components/ui";
+import { Card, CardHeader, Disclosure } from "@/components/ui";
 import { accessSummary, getPatientBundle } from "@/lib/data";
 import { fmtDateTime, fullName } from "@/lib/format";
 import { getStore } from "@/lib/store";
@@ -19,24 +19,25 @@ export default async function PatientPrivacy({ params }: PageProps<"/patient/[pi
   const store = await getStore();
   const [shares, audit, who] = await Promise.all([store.listShares(pid), store.listAudit(pid), accessSummary(p)]);
   const othersCount = audit.filter((e) => e.actor.role === "clinician" || e.actor.role === "recipient").length;
+  const OWN_VIEWS = new Set(["profile_viewed", "session_viewed", "signal_viewed", "comparison_viewed"]);
+  const isOwnView = (e: (typeof audit)[number]) => e.actor.role === "patient" && OWN_VIEWS.has(e.action);
+  const important = audit.filter((e) => !isOwnView(e));
+  const ownViews = audit.filter(isOwnView);
 
   return (
     <div className="space-y-8">
       <div className="max-w-3xl">
         <p className="eyebrow !text-brand">My data</p>
         <h1 className="display mt-1 text-[34px] font-semibold">Your data, in plain sight.</h1>
-        <p className="mt-2 text-[17px] leading-relaxed text-ink-2">
-          What we collect, where it goes, who has looked at it, and how to take it with you or delete it. No fine print.
-        </p>
+        <p className="mt-2 text-[17px] leading-relaxed text-ink-2">Who has looked at your record, and how to share it, take it with you or delete it.</p>
       </div>
 
       {/* At a glance */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-3">
         {[
           { Icon: Database, k: "What we store", v: `${b.recordings.length} recorded sets from ${b.sessions.length} sessions` },
           { Icon: MapPin, k: "Where", v: p.storageRegion },
           { Icon: Lock, k: "Who can see it", v: `${who.people.length - 1} ${who.people.length - 1 === 1 ? "person" : "people"} besides you` },
-          { Icon: Clock, k: "How long", v: "While you’re in care + 10 years, or until you delete it" },
         ].map((x) => (
           <Card key={x.k} className="p-5">
             <x.Icon className="size-5 text-brand" aria-hidden />
@@ -46,30 +47,44 @@ export default async function PatientPrivacy({ params }: PageProps<"/patient/[pi
         ))}
       </div>
 
-      <section>
-        <h2 className="title text-xl font-semibold">What the sensor measures</h2>
-        <p className="mt-1 text-sm text-ink-2">Just one thing — the electrical activity of your muscle — reported three ways. Each set is labelled with the exercise, set number, date and time.</p>
-        <div className="mt-4">
-          <SignalExplainer />
-        </div>
-      </section>
-
-      <section>
-        <h2 className="title text-xl font-semibold">How it travels</h2>
-        <div className="mt-4">
-          <DataFlow region={p.storageRegion} />
-        </div>
-      </section>
+      <Card className="px-5 py-3 sm:px-6">
+        <Disclosure summary="How your data is collected and stored">
+          <div className="space-y-6 pb-3">
+            <section>
+              <h2 className="title text-base font-semibold">What the sensor measures</h2>
+              <p className="mt-1 text-sm text-ink-2">Just one thing — the electrical activity of your muscle — reported three ways. Each set is labelled with the exercise, set number, date and time.</p>
+              <div className="mt-3">
+                <SignalExplainer />
+              </div>
+            </section>
+            <section>
+              <h2 className="title text-base font-semibold">How it travels</h2>
+              <div className="mt-3">
+                <DataFlow region={p.storageRegion} />
+              </div>
+            </section>
+          </div>
+        </Disclosure>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_400px]">
         <div className="space-y-6">
           <Card>
             <CardHeader
               title="Access log"
-              subtitle={`Everything that happened to your record — ${othersCount} view${othersCount === 1 ? "" : "s"} by others so far. Nothing is hidden.`}
+              subtitle={`${othersCount} view${othersCount === 1 ? "" : "s"} by others so far. Your own browsing is kept below — nothing is hidden.`}
             />
-            <div className="max-h-[720px] overflow-y-auto px-5 pb-5 pt-4 sm:px-6">
-              <AccessLog events={audit} audience="patient" />
+            <div className="px-5 pb-5 pt-4 sm:px-6">
+              <div className="max-h-[560px] overflow-y-auto">
+                <AccessLog events={important} audience="patient" />
+              </div>
+              {ownViews.length > 0 && (
+                <Disclosure summary={`Your own activity (${ownViews.length})`} className="mt-3">
+                  <div className="max-h-[360px] overflow-y-auto">
+                    <AccessLog events={ownViews} audience="patient" />
+                  </div>
+                </Disclosure>
+              )}
             </div>
           </Card>
         </div>
@@ -134,18 +149,18 @@ export default async function PatientPrivacy({ params }: PageProps<"/patient/[pi
       </div>
 
       <Card className="p-5 sm:p-6">
-        <div className="flex flex-wrap items-start gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <Scale className="size-5 text-brand" aria-hidden />
-          <div className="min-w-0 flex-1 text-sm text-ink-2">
-            <p className="font-semibold text-ink">Your rights</p>
-            <p className="mt-1">
-              You can see, copy, correct and (where the law allows) delete your health information. Retention rules: {p.retentionPolicy}
-            </p>
-          </div>
+          <p className="min-w-0 flex-1 text-sm text-ink-2">
+            <span className="font-semibold text-ink">Your rights.</span> You can see, copy, correct and (where the law allows) delete your health information.
+          </p>
           <Link href="/data-handling" className="inline-flex items-center gap-1 text-[13px] font-medium text-brand hover:underline">
             <FileQuestion className="size-4" aria-hidden /> Full data-handling policy
           </Link>
         </div>
+        <Disclosure summary="How long we keep it" className="mt-2 -mb-1">
+          <p className="text-sm text-ink-2">While you’re in care + 10 years, or until you delete it. {p.retentionPolicy}</p>
+        </Disclosure>
       </Card>
     </div>
   );
