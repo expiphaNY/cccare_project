@@ -51,7 +51,7 @@ export default async function DoctorHome() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="eyebrow">Northside Rehabilitation Clinic</p>
-          <h1 className="display mt-1 text-[32px] font-semibold">Welcome back, Dr. Hart</h1>
+          <h1 className="display mt-1 text-[32px] font-semibold">Welcome back, Doctor</h1>
         </div>
         <ButtonLink href="/doctor/new" variant="primary">
           <Plus className="size-4" aria-hidden /> New patient
