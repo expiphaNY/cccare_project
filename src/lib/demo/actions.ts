@@ -1,9 +1,16 @@
-// Stand-in for src/app/actions.ts in the static demo build (see next.config.ts).
-// Server actions can't exist in a static export, and the demo is read-only anyway.
+// =============================================================================
+// actions.ts : STAND-IN SERVER ACTIONS FOR THE STATIC DEMO
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Replaces src/app/actions.ts in the static demo build (see next.config.ts). Server actions cannot exist
+//   in a static export, and the demo is read-only anyway, so each one just reports that the demo is read-only.
+// =============================================================================
+
 /* eslint-disable @typescript-eslint/no-unused-vars -- signatures mirror the real actions */
 import { DEMO_MSG } from "@/lib/demo";
 
-type As = "clinician" | "patient";
+type As = "clinician";
 
 export async function createShareAction(_input: unknown): Promise<{ ok: true; token: string } | { ok: false; error: string }> {
   return { ok: false, error: DEMO_MSG };
@@ -22,6 +29,25 @@ export async function deletePatientAction(
 }
 
 export async function addNoteAction(_patientId: string, _sessionId: string, _text: string): Promise<void> {}
+
+export async function editNoteAction(
+  _patientId: string,
+  _sessionId: string,
+  _index: number,
+  _expected: string,
+  _text: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  return { ok: false, error: DEMO_MSG };
+}
+
+export async function deleteNoteAction(
+  _patientId: string,
+  _sessionId: string,
+  _index: number,
+  _expected: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  return { ok: false, error: DEMO_MSG };
+}
 
 export async function createPatientAction(
   _prev: { error?: string; id?: string } | null,

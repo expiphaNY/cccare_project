@@ -24,6 +24,8 @@
 export const MYOWARE_SERVICE = "ec3af789-2154-49f4-a9fc-bc6c88e9e930";
 export const MYOWARE_CHARACTERISTIC = "f3a56edf-8f1e-4533-93bf-5601b2e91308";
 export const MYOWARE_NAME_PREFIX = "MyoWare";
+/** Lines per second the firmware sends (SEND_HZ in firmware/MyoCareBLE). The demo sensor uses the same rate. */
+export const BOARD_SEND_HZ = 50;
 
 /** One reading as it arrives from the board, before unit conversion. */
 export interface LiveSample {
@@ -160,13 +162,17 @@ function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> 
 const NUM = "-?\\d+(?:\\.\\d+)?(?:e-?\\d+)?";
 
 /**
- * Parses one line / notification. Accepts labelled lines such as
- * "Muscle:3883,Accel_X:0.00,Accel_Y:0.00,Accel_Z:0.00" or "emg=1834 ax=0.01",
- * and unlabelled ones: "1834.00" or "1834,0.01,-0.98,0.12" (emg, ax, ay, az).
- * Returns null for blank or garbled lines.
+ * Reads one line of text sent by the sensor and turns it into numbers.
+ * The usual line looks like:
+ *   Muscle:3883,Accel_X:0.00,Accel_Y:0.00,Accel_Z:0.00,Fs:500,Raw:12 -3 5 ...
+ *     Muscle  = the smooth muscle reading
+ *     Accel   = the arm movement in 3 directions
+ *     Raw     = a batch of fast muscle readings (Fs = how many per second)
+ * It also accepts simpler lines like "emg=1834" or "1834,0.01,-0.98,0.12".
+ * If the line is blank or makes no sense, it returns null and the line is skipped.
  */
 export function parsePacket(text: string): Omit<LiveSample, "t"> | null {
-  // Batched raw EMG rides at the end of the line: "...,Fs:500,Raw:12 -3 5 …".
+  // The batch of fast readings sits at the end of the line: "...,Fs:500,Raw:12 -3 5 ...". Split it off first.
   let rawPart: Pick<LiveSample, "raw" | "rawFs"> = {};
   const rm = /(?:^|,)\s*Raw\s*:\s*(-?\d+(?:\s+-?\d+)*)\s*$/i.exec(text);
   if (rm) {
@@ -593,6 +599,7 @@ function gauss() {
 export function connectDemo(o: Pick<ConnectOptions, "onSample" | "onDisconnect">): SensorConnection {
   const t0 = performance.now();
   let level = 0;
+  let arm = 0;
   let lastRaw = t0;
   const id = window.setInterval(() => {
     const t = performance.now();
@@ -607,14 +614,23 @@ export function connectDemo(o: Pick<ConnectOptions, "onSample" | "onDisconnect">
     const nRaw = Math.max(1, Math.round(((t - lastRaw) / 1000) * DEMO_RAW_FS));
     lastRaw += (nRaw * 1000) / DEMO_RAW_FS;
     const raw = Array.from({ length: nRaw }, () => Math.round(gauss() * (6 + level * 140)));
-    // Forearm swings up during a curl: gravity rotates from -z towards +y.
-    const angle = level * 1.25;
+    // Forearm curls up ~110° a moment after the muscle fires (electromechanical
+    // delay): gravity rotates from -z towards +y. Like a real IMU over Bluetooth
+    // there is sensor noise, hand tremor and the odd single-reading glitch.
+    arm += (level - arm) * 0.09;
+    const angle = arm * 1.95;
+    // Physiological tremor (~9 Hz) that grows with effort and, cycle by cycle, with fatigue.
+    const tr = (0.004 + arm * (0.008 + 0.0015 * (cycle % 8))) * Math.SQRT2;
+    const tremor = tr * Math.sin(s * 2 * Math.PI * 9.2);
+    const tremorX = tr * 0.8 * Math.sin(s * 2 * Math.PI * 9.6 + 1.3);
+    const glitch = Math.random() < 0.012 ? (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.6) : 0;
+    const axis = Math.floor(Math.random() * 3);
     o.onSample({
       t,
       v: Math.max(0, Math.min(4095, Math.round(counts))),
-      ax: (Math.random() - 0.5) * 0.04,
-      ay: Math.sin(angle) + (Math.random() - 0.5) * 0.04,
-      az: -Math.cos(angle) + (Math.random() - 0.5) * 0.04,
+      ax: 0.12 + tremorX + gauss() * 0.004 + (axis === 0 ? glitch : 0),
+      ay: Math.sin(angle) + tremor + gauss() * 0.004 + (axis === 1 ? glitch : 0),
+      az: -Math.cos(angle) + tremor * 0.5 + gauss() * 0.004 + (axis === 2 ? glitch : 0),
       raw,
       rawFs: DEMO_RAW_FS,
     });

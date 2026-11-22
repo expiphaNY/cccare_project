@@ -1,3 +1,11 @@
+// =============================================================================
+// NewPatientForm.tsx : FORM FOR A NEW PATIENT PROFILE
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Collects the patient's details and a consent tick-box (to be confirmed with the patient), and calls the server action that creates the profile.
+// =============================================================================
+
 "use client";
 
 import { useActionState, useEffect } from "react";

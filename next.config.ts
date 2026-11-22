@@ -1,3 +1,13 @@
+// =============================================================================
+// next.config.ts : NEXT.JS SETTINGS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Settings for the web framework. Normal builds are the full app. When `npm run build:pages` sets
+//   NEXT_PUBLIC_DEMO=1 (see scripts/build-pages.mjs) the same code is built as a static, read-only demo
+//   for GitHub Pages.
+// =============================================================================
+
 import type { NextConfig } from "next";
 
 /**

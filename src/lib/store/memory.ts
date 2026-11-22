@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { buildSeed } from "../mock";
-import { generateSignal } from "../signal";
+import { buildSeed, synthExtras } from "../mock";
+import { generateMotion, generateSignal } from "../signal";
 import type {
   AuditEvent,
   DeletionReceipt,
@@ -10,7 +10,10 @@ import type {
   Session,
   Share,
   SignalData,
+  Suggestion,
+  WeightSettings,
 } from "../types";
+import { withWeightDefaults } from "../types";
 import type { Store } from "./types";
 
 interface DB {
@@ -21,6 +24,10 @@ interface DB {
   shares: Share[];
   audit: AuditEvent[];
   receipts: DeletionReceipt[];
+  /** Added after v6; optional so existing store files keep their data. */
+  suggestions?: Suggestion[];
+  /** Clinic weight list; optional so older store files keep working. */
+  weights?: WeightSettings;
 }
 
 const DB_VERSION = 6;
@@ -43,7 +50,22 @@ export class MemoryStore implements Store {
     if (this.ephemeral) return { version: DB_VERSION, ...buildSeed(), receipts: [] };
     try {
       const parsed = JSON.parse(fs.readFileSync(DB_FILE, "utf8")) as DB;
-      if (parsed.version === DB_VERSION) return parsed;
+      if (parsed.version === DB_VERSION) {
+        // Seed recordings saved before loads / rep checks existed: add them.
+        let changed = false;
+        for (const r of parsed.recordings)
+          if (r.synth && (!r.load || !r.repCheck || !r.tremor)) {
+            Object.assign(r, synthExtras(r), { hasMotion: true });
+            changed = true;
+          }
+        for (const p of parsed.patients)
+          if (!p.prescribedLoad) {
+            const last = parsed.recordings.filter((r) => r.patientId === p.id && r.load).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt))[0];
+            if (last?.load) (p.prescribedLoad = last.load), (changed = true);
+          }
+        if (changed) this.persist(parsed);
+        return parsed;
+      }
     } catch {
       /* first run */
     }
@@ -92,6 +114,7 @@ export class MemoryStore implements Store {
     this.db.recordings = this.db.recordings.filter((r) => r.patientId !== id);
     this.db.shares = this.db.shares.filter((s) => s.patientId !== id);
     this.db.audit = this.db.audit.filter((a) => a.patientId !== id);
+    this.db.suggestions = (this.db.suggestions ?? []).filter((x) => x.patientId !== id);
     this.db.receipts.push({ ...receipt, counts });
     this.persist();
     return counts;
@@ -145,7 +168,7 @@ export class MemoryStore implements Store {
     let data: SignalData;
     if (rec.synth) {
       const g = generateSignal(rec.synth, rec.sampleRateHz);
-      data = { recordingId, sampleRateHz: g.fs, raw: g.raw, rectified: g.rectified, envelope: g.envelope };
+      data = { recordingId, sampleRateHz: g.fs, raw: g.raw, rectified: g.rectified, envelope: g.envelope, motion: generateMotion(rec.synth, rec.sampleRateHz) };
     } else {
       try {
         const j = JSON.parse(fs.readFileSync(path.join(SIGNAL_DIR, `${recordingId}.json`), "utf8"));
@@ -196,5 +219,33 @@ export class MemoryStore implements Store {
 
   async listDeletionReceipts() {
     return [...this.db.receipts].sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
+  }
+
+  async listSuggestions(patientId?: string) {
+    return (this.db.suggestions ?? [])
+      .filter((s) => !patientId || s.patientId === patientId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((s) => structuredClone(s));
+  }
+  async getSuggestion(id: string) {
+    const s = (this.db.suggestions ?? []).find((x) => x.id === id);
+    return s ? structuredClone(s) : null;
+  }
+  async createSuggestion(s: Suggestion) {
+    (this.db.suggestions ??= []).push(s);
+    this.persist();
+  }
+  async updateSuggestion(id: string, patch: Partial<Suggestion>) {
+    const s = (this.db.suggestions ?? []).find((x) => x.id === id);
+    if (s) Object.assign(s, patch);
+    this.persist();
+  }
+
+  async getWeightSettings() {
+    return structuredClone(withWeightDefaults(this.db.weights));
+  }
+  async saveWeightSettings(w: WeightSettings) {
+    this.db.weights = w;
+    this.persist();
   }
 }

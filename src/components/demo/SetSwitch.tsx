@@ -1,3 +1,11 @@
+// =============================================================================
+// SetSwitch.tsx : STATIC DEMO ONLY: CHOOSING A SET
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The static demo cannot read ?set= on a server, so this shows the chosen set in the browser.
+// =============================================================================
+
 "use client";
 
 import { Suspense, type ReactNode } from "react";

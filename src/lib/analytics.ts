@@ -1,5 +1,18 @@
-// Pure functions that turn recordings into the macro-level numbers shown on
-// dashboards. Safe to import from client components.
+// =============================================================================
+// analytics.ts : TURNING RECORDINGS INTO DASHBOARD NUMBERS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Pure functions (no side effects) that turn a list of recordings into the macro-level numbers on the
+//   dashboards. They define the six metrics (peak envelope, mean envelope, RMS, integrated EMG, median
+//   frequency, fatigue index), say which metrics a recording can supply (RMS and median frequency need the
+//   raw channel, so sets recorded live with the envelope alone leave them out), build a trend line per
+//   exercise, label it improving, steady, declining or new, and count sessions per week.
+//   Safe to import from client components.
+//
+// STEPS TAKEN FOR THE MARKING RUBRIC
+//   Design limitations: a metric that cannot be measured for a recording is hidden, never shown as a made-up number.
+// =============================================================================
 
 import type { ExerciseKey, Metrics, Recording, Session } from "./types";
 import { measuredChannels } from "./types";

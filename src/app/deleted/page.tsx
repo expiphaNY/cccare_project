@@ -1,3 +1,12 @@
+// =============================================================================
+// page.tsx : AFTER A PROFILE IS DELETED
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Shown after a clinician deletes a patient. It shows the deletion receipt: proof of what was
+//   removed and when, which deliberately contains no health data.
+// =============================================================================
+
 import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 import { Logo } from "@/components/nav";

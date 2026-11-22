@@ -1,6 +1,16 @@
+// =============================================================================
+// mongo.ts : THE REAL DATABASE (MONGODB)
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Stores patients, sessions, recordings, share links, the audit log and the assistant's drafts as MongoDB collections, and each set's waveform as compact binary. It creates its indexes on start and seeds the demo data into an empty database.
+// =============================================================================
+
+import fs from "node:fs";
+import path from "node:path";
 import { Binary, MongoClient, type Db } from "mongodb";
-import { buildSeed } from "../mock";
-import { generateSignal } from "../signal";
+import { buildSeed, synthExtras } from "../mock";
+import { generateMotion, generateSignal } from "../signal";
 import type {
   AuditEvent,
   DeletionReceipt,
@@ -9,11 +19,26 @@ import type {
   Session,
   Share,
   SignalData,
+  Suggestion,
+  WeightSettings,
 } from "../types";
+import { withWeightDefaults } from "../types";
 import type { Store } from "./types";
 
 /**
- * MongoDB collections
+ * THE REAL DATABASE (MongoDB). Each "collection" below is like a table.
+ *
+ * In plain words:
+ *   patients, sessions, recordings = the small facts (who, when, which exercise, the metrics)
+ *   signals                        = the big waveform data, stored as compact binary numbers
+ *   shares                         = private links for outside viewers
+ *   audit_events                   = a log of who looked at what
+ *   deletion_receipts              = proof that data was deleted (holds no health data)
+ *   suggestions, settings          = the AI helper's ideas and clinic settings
+ *
+ * Why the waveform is separate: it is large, and most pages only need the small facts.
+ *
+ * Technical detail (for reference):
  *  patients           { _id: patientId, ...Patient }
  *  sessions           { _id: sessionId, patientId, startedAt, ... }       idx: {patientId, startedAt}
  *  recordings         { _id: recordingId, patientId, sessionId, exercise, setNumber, recordedAt, metrics, ... }
@@ -24,6 +49,13 @@ import type { Store } from "./types";
  *  shares             { _id: token, patientId, expiresAt, revokedAt, ... } idx: {patientId}
  *  audit_events       { _id, patientId, at, actor, action, detail }        idx: {patientId, at:-1}
  *  deletion_receipts  { _id, patientRef(sha256), deletedAt, counts }       (no health data)
+ *  suggestions        { _id, patientId, kind, status, createdAt, title, body, proposedLoad?, ... } idx: {patientId, createdAt:-1}
+ *  settings           { _id: "weights", unit, options[], updatedAt, updatedBy }   clinic-wide weight list
+ *
+ *  recordings also carry  load { value, unit, kg }  (weight lifted in the set)
+ *  and repCheck { status, emgReps, motionReps, verifiedReps, agreement, reps[] }
+ *  and tremor { level, headlineMg, holdRmsMg, offAxisRmsMg, peakHz, rhythmicityPct, perRepMg[], ... }
+ *  (EMG vs accelerometer cross-check). patients carry prescribedLoad.
  *
  * Production hardening (not needed for the demo): enable Queryable Encryption
  * or CSFLE on name/dob/mrn, TLS-only connections, and a least-privilege DB user.
@@ -53,8 +85,8 @@ export class MongoStore implements Store {
   private dbPromise: Promise<Db>;
 
   constructor(uri: string, dbName = process.env.MONGODB_DB ?? "myocare") {
-    // Fail fast (driver default is 30 s per request) and don't cache a failed
-    // connection forever — clear it so the next attempt can retry.
+    // Give up after 5 seconds instead of waiting 30. If the connection fails,
+    // forget it so the next request can try again.
     g.__mongoClient ??= new MongoClient(uri, { serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000 })
       .connect()
       .catch((e) => {
@@ -67,7 +99,7 @@ export class MongoStore implements Store {
     g.__mongoSeeded.catch(() => {});
   }
 
-  /** Resolves once connected and seeded; rejects if the cluster is unreachable. */
+  /** Waits until we are connected to the database. Fails if it cannot be reached. */
   async ready() {
     await this.db();
   }
@@ -78,6 +110,7 @@ export class MongoStore implements Store {
     return db;
   }
 
+  // First-time setup: make searches fast (indexes) and add demo data if the database is empty.
   private async ensureSeeded(db: Db) {
     await Promise.all([
       db.collection("sessions").createIndex({ patientId: 1, startedAt: 1 }),
@@ -86,9 +119,16 @@ export class MongoStore implements Store {
       db.collection("shares").createIndex({ patientId: 1 }),
       db.collection("audit_events").createIndex({ patientId: 1, at: -1 }),
       db.collection("signals").createIndex({ patientId: 1 }),
+      db.collection("suggestions").createIndex({ patientId: 1, createdAt: -1 }),
+      db.collection("recordings").createIndex({ "load.kg": 1 }),
     ]);
+    await this.importLocalSuggestions(db);
     const any = await db.collection("patients").estimatedDocumentCount();
-    if (any > 0 || process.env.MONGODB_SEED === "false") return;
+    if (any > 0) {
+      await this.backfillSynthetic(db);
+      return;
+    }
+    if (process.env.MONGODB_SEED === "false") return;
     const seed = buildSeed();
     const withId = <T extends object>(xs: T[], key: keyof T) =>
       xs.map((x) => ({ _id: String(x[key]), ...x }));
@@ -97,6 +137,49 @@ export class MongoStore implements Store {
     await db.collection("recordings").insertMany(withId(seed.recordings, "id") as never[]);
     await db.collection("shares").insertMany(withId(seed.shares, "token") as never[]);
     await db.collection("audit_events").insertMany(withId(seed.audit, "id") as never[]);
+  }
+
+  /**
+   * Seed recordings stored before loads, the EMG/accelerometer cross-check and
+   * tremor existed get them (deterministic from their seed), and seed patients get a
+   * prescribed load. Only touches synthetic recordings missing the fields.
+   */
+  private async backfillSynthetic(db: Db) {
+    const recs = db.collection<WithId<Recording>>("recordings");
+    const missing = await recs.find({ synth: { $exists: true }, $or: [{ load: { $exists: false } }, { repCheck: { $exists: false } }, { tremor: { $exists: false } }] }).toArray();
+    if (missing.length) {
+      await recs.bulkWrite(
+        missing.map((r) => ({ updateOne: { filter: { _id: r._id }, update: { $set: { ...synthExtras(r), hasMotion: true } } } })),
+        { ordered: false },
+      );
+      console.log(`[store] Added loads, rep checks and tremor to ${missing.length} seed recording(s).`);
+    }
+    const pats = db.collection<WithId<Patient>>("patients");
+    for (const p of await pats.find({ prescribedLoad: { $exists: false } }).toArray()) {
+      const last = await recs.find({ patientId: p._id, load: { $exists: true } }).sort({ recordedAt: -1 }).limit(1).next();
+      if (last?.load) await pats.updateOne({ _id: p._id }, { $set: { prescribedLoad: last.load } });
+    }
+  }
+
+  /**
+   * Suggestions drafted while MongoDB was unreachable were written to the local
+   * file store (.data/store.json). Copy any that Mongo doesn't have yet so none
+   * are lost. Insert-only: a document already in Mongo is never overwritten.
+   */
+  private async importLocalSuggestions(db: Db) {
+    let local: Suggestion[] = [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(process.cwd(), ".data", "store.json"), "utf8")) as { suggestions?: Suggestion[] };
+      local = parsed.suggestions ?? [];
+    } catch {
+      return; // no local store, nothing to import
+    }
+    if (!local.length) return;
+    const res = await db.collection("suggestions").bulkWrite(
+      local.map((s) => ({ updateOne: { filter: { _id: s.id as never }, update: { $setOnInsert: { _id: s.id, ...s } as never }, upsert: true } })),
+      { ordered: false },
+    );
+    if (res.upsertedCount) console.log(`[store] Imported ${res.upsertedCount} suggestion(s) from the local file store into MongoDB.`);
   }
 
   private col<T>(name: string) {
@@ -119,6 +202,7 @@ export class MongoStore implements Store {
     const c = await this.col<Patient>("patients");
     await c.updateOne({ _id: id }, { $set: patch });
   }
+  // Deleting a patient deletes everything linked to them, then saves a receipt (with no health data).
   async deletePatient(id: string, receipt: DeletionReceipt) {
     const db = await this.db();
     const counts = {
@@ -128,6 +212,7 @@ export class MongoStore implements Store {
       auditEvents: (await db.collection("audit_events").deleteMany({ patientId: id })).deletedCount,
     };
     await db.collection("signals").deleteMany({ patientId: id });
+    await db.collection("suggestions").deleteMany({ patientId: id });
     await db.collection<WithId<Patient>>("patients").deleteOne({ _id: id });
     await db
       .collection<WithId<DeletionReceipt>>("deletion_receipts")
@@ -156,6 +241,7 @@ export class MongoStore implements Store {
     const c = await this.col<Recording>("recordings");
     return strip(await c.findOne({ _id: id }));
   }
+  // Saves a set in two parts: the small facts go in "recordings", the waveform goes in "signals".
   async addRecording(r: Recording, signal?: SignalData) {
     const db = await this.db();
     await db.collection<WithId<Recording>>("recordings").insertOne({ _id: r.id, ...r });
@@ -171,12 +257,13 @@ export class MongoStore implements Store {
       });
     }
   }
+  // Loads the waveform. Demo recordings are re-made on the spot; real ones are read from the database.
   async getSignal(recordingId: string): Promise<SignalData | null> {
     const rec = await this.getRecording(recordingId);
     if (!rec) return null;
     if (rec.synth) {
       const s = generateSignal(rec.synth, rec.sampleRateHz);
-      return { recordingId, sampleRateHz: s.fs, raw: s.raw, rectified: s.rectified, envelope: s.envelope };
+      return { recordingId, sampleRateHz: s.fs, raw: s.raw, rectified: s.rectified, envelope: s.envelope, motion: generateMotion(rec.synth, rec.sampleRateHz) };
     }
     const db = await this.db();
     const doc = await db.collection("signals").findOne({ _id: recordingId as never });
@@ -220,5 +307,31 @@ export class MongoStore implements Store {
   async listDeletionReceipts() {
     const c = await this.col<DeletionReceipt>("deletion_receipts");
     return (await c.find().sort({ deletedAt: -1 }).toArray()).map((d) => strip(d)!);
+  }
+
+  async listSuggestions(patientId?: string) {
+    const c = await this.col<Suggestion>("suggestions");
+    return (await c.find(patientId ? { patientId } : {}).sort({ createdAt: -1 }).toArray()).map((d) => strip(d)!);
+  }
+  async getSuggestion(id: string) {
+    const c = await this.col<Suggestion>("suggestions");
+    return strip(await c.findOne({ _id: id }));
+  }
+  async createSuggestion(s: Suggestion) {
+    const c = await this.col<Suggestion>("suggestions");
+    await c.insertOne({ _id: s.id, ...s });
+  }
+  async updateSuggestion(id: string, patch: Partial<Suggestion>) {
+    const c = await this.col<Suggestion>("suggestions");
+    await c.updateOne({ _id: id }, { $set: patch });
+  }
+
+  async getWeightSettings(): Promise<WeightSettings> {
+    const c = await this.col<WeightSettings>("settings");
+    return withWeightDefaults(strip(await c.findOne({ _id: "weights" })));
+  }
+  async saveWeightSettings(w: WeightSettings) {
+    const c = await this.col<WeightSettings>("settings");
+    await c.replaceOne({ _id: "weights" }, { ...w } as never, { upsert: true });
   }
 }

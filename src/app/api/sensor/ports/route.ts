@@ -1,3 +1,13 @@
+// =============================================================================
+// route.ts : BACKUP CONNECTION: LISTING SERIAL PORTS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Part of the back-up way to reach the sensor (see lib/server/serial-bridge.ts). Lists the serial
+//   ports on this computer so the page can pick the paired sensor. Refuses any request that does not
+//   come from this computer (localhost).
+// =============================================================================
+
 import { isLocalRequest, listSerialPorts } from "@/lib/server/serial-bridge";
 
 /** GET /api/sensor/ports: serial ports on this computer (localhost only). */

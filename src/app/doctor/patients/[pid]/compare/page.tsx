@@ -1,3 +1,12 @@
+// =============================================================================
+// page.tsx : COMPARE TAB
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Loads one patient's recordings and hands them to the comparison tool, which sets a baseline
+//   against the latest recordings of the same exercise and describes the change in plain words.
+// =============================================================================
+
 import { notFound } from "next/navigation";
 import { CompareTool } from "@/components/CompareTool";
 import { CompareFromQuery } from "@/components/demo/CompareFromQuery";

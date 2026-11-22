@@ -1,3 +1,14 @@
+// =============================================================================
+// route.ts : DOWNLOADING A PATIENT'S RECORD
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   GET /api/export/<pdf | html | fhir | csv>?patient=<id>
+//   Checks that the person is allowed to see this patient (lib/access.ts), builds the file on the server
+//   from the stored data, and records the download in the access log. FHIR is a standard format that
+//   another clinic's system can read; CSV is the raw numbers for a spreadsheet.
+// =============================================================================
+
 import { authorize } from "@/lib/access";
 import { getPatientBundle, logAccess, resolveShare, type PatientBundle } from "@/lib/data";
 import { buildFhirBundle } from "@/lib/export/fhir";

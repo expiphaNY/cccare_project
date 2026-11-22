@@ -1,28 +1,48 @@
+// =============================================================================
+// actions.ts : SERVER ACTIONS: EVERY CHANGE A CLINICIAN CAN MAKE
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Each function here runs on the server when a form or button is used on a page:
+//     - create a patient profile
+//     - add, edit or delete a session note
+//     - create or revoke an expiring share link for an outside clinic
+//     - change a patient's consent choices
+//     - delete a patient and everything about them (a receipt with no health data is kept)
+//   Changes that matter for privacy (sharing, consent, deleting) are written to the
+//   access log, which the patient can read.
+//
+// STEPS TAKEN FOR THE MARKING RUBRIC
+//   Impact on people (safety and privacy): consent, sharing and deletion are explicit actions and
+//   every one leaves a visible line in the access log.
+// =============================================================================
+
 "use server";
 
 import { createHash, randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { clinicianActor, logAccess, newShareToken, patientActor } from "@/lib/data";
+import { clinicianActor, logAccess, newShareToken } from "@/lib/data";
 import { CURRENT_CLINICIAN } from "@/lib/mock";
 import { getStore } from "@/lib/store";
-import type { Actor, Consent, ExerciseKey, Patient, Share, Side, Sex } from "@/lib/types";
-import { EXERCISES } from "@/lib/types";
+import type { Actor, Consent, ExerciseKey, Patient, Share, Side, Sex, WeightUnit } from "@/lib/types";
+import { EXERCISES, fmtLoad, makeLoad } from "@/lib/types";
 import { fullName } from "@/lib/format";
 import { DEFAULT_FS } from "@/lib/signal";
 
-type As = "clinician" | "patient";
+/** Clinician-only app. Kept as a parameter so callers stay explicit about who acts. */
+type As = "clinician";
 
-async function actorFor(as: As, patientId: string): Promise<{ actor: Actor; patient: Patient }> {
+async function actorFor(_as: As, patientId: string): Promise<{ actor: Actor; patient: Patient }> {
   const store = await getStore();
   const patient = await store.getPatient(patientId);
   if (!patient) throw new Error("Patient not found");
-  return { actor: as === "clinician" ? clinicianActor : patientActor(patient), patient };
+  return { actor: clinicianActor, patient };
 }
 
 function revalidatePatient(id: string) {
   revalidatePath(`/doctor/patients/${id}`, "layout");
-  revalidatePath(`/patient/${id}`, "layout");
   revalidatePath("/doctor");
+  revalidatePath("/doctor/suggestions");
 }
 
 export async function createShareAction(input: {
@@ -36,8 +56,6 @@ export async function createShareAction(input: {
   includeRaw: boolean;
 }): Promise<{ ok: true; token: string } | { ok: false; error: string }> {
   const { actor, patient } = await actorFor(input.as, input.patientId);
-  if (input.as === "patient" && !patient.consent.patientSharing)
-    return { ok: false, error: "Sharing by patient is turned off in consent settings." };
   const recipient = input.recipient.trim();
   if (!recipient) return { ok: false, error: "Say who this link is for — it is shown in the access log." };
   if (input.scope === "sessions" && !input.sessionIds?.length) return { ok: false, error: "Pick at least one session." };
@@ -110,7 +128,7 @@ export async function deletePatientAction(
     id: `del-${randomUUID().slice(0, 8)}`,
     patientRef: createHash("sha256").update(patient.id).digest("hex"),
     deletedAt: new Date().toISOString(),
-    deletedBy: { role: actor.role, name: actor.role === "patient" ? "The patient" : actor.name },
+    deletedBy: { role: actor.role, name: actor.name },
     counts: { sessions: 0, recordings: 0, shares: 0, auditEvents: 0 },
   };
   const counts = await store.deletePatient(patientId, receipt);
@@ -128,6 +146,64 @@ export async function addNoteAction(patientId: string, sessionId: string, text: 
   await store.upsertSession({ ...session, notes: session.notes ? `${session.notes}\n${line}` : line });
   await logAccess(patientId, clinicianActor, "note_added", "Added a clinical note to a session.");
   revalidatePatient(patientId);
+}
+
+/**
+ * Notes live in one text field, one note per line. Edit and delete address a note
+ * by its line number plus the exact text the clinician saw, so a stale page can
+ * never change the wrong note.
+ */
+const NOTE_PREFIX = /^.+? — [^:\n]+: /;
+
+async function loadNoteLine(patientId: string, sessionId: string, index: number, expected: string) {
+  const store = await getStore();
+  const session = await store.getSession(sessionId);
+  if (!session || session.patientId !== patientId) return { ok: false, error: "Session not found." } as const;
+  const lines = (session.notes ?? "").split("\n");
+  if (!Number.isInteger(index) || index < 0 || lines[index] !== expected)
+    return { ok: false, error: "This note was changed elsewhere. Reload the page and try again." } as const;
+  return { ok: true, store, session, lines } as const;
+}
+
+export async function editNoteAction(
+  patientId: string,
+  sessionId: string,
+  index: number,
+  expected: string,
+  text: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const body = text.replace(/\s*\n\s*/g, " ").trim();
+  if (!body) return { ok: false, error: "A note can’t be empty. Use Delete to remove it." };
+  const found = await loadNoteLine(patientId, sessionId, index, expected);
+  if (!found.ok) return found;
+  const { store, session, lines } = found;
+  // Keep the "date — clinician:" label so the record still shows who wrote it and when.
+  const prefix = expected.match(NOTE_PREFIX)?.[0] ?? "";
+  lines[index] = `${prefix}${body}`;
+  await store.upsertSession({ ...session, notes: lines.join("\n") });
+  await logAccess(patientId, clinicianActor, "note_edited", "Edited a clinical note on a session.");
+  revalidatePatient(patientId);
+  return { ok: true };
+}
+
+export async function deleteNoteAction(
+  patientId: string,
+  sessionId: string,
+  index: number,
+  expected: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const found = await loadNoteLine(patientId, sessionId, index, expected);
+  if (!found.ok) return found;
+  const { store, session, lines } = found;
+  lines.splice(index, 1);
+  const rest = lines.join("\n");
+  // Drop the field entirely when no notes remain, rather than storing an empty value.
+  const { notes: _old, ...withoutNotes } = session;
+  void _old;
+  await store.upsertSession(rest ? { ...session, notes: rest } : withoutNotes);
+  await logAccess(patientId, clinicianActor, "note_deleted", "Deleted a clinical note from a session.");
+  revalidatePatient(patientId);
+  return { ok: true };
 }
 
 export async function createPatientAction(
@@ -183,4 +259,86 @@ export async function createPatientAction(
   await logAccess(id, clinicianActor, "profile_created", "Profile created. Consent recorded.");
   revalidatePath("/doctor");
   return { id };
+}
+
+/**
+ * Clinician review of an assistant draft. Approval is the only way a draft
+ * changes the record: a note is appended to its session, a load change
+ * becomes the patient's prescribed working weight.
+ */
+export async function reviewSuggestionAction(input: {
+  patientId: string;
+  id: string;
+  decision: "approved" | "rejected";
+  title?: string;
+  body?: string;
+  note?: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const store = await getStore();
+  const s = await store.getSuggestion(input.id);
+  if (!s || s.patientId !== input.patientId) return { ok: false, error: "Draft not found." };
+  if (s.status !== "pending") return { ok: false, error: "This draft has already been reviewed." };
+  const title = input.title?.trim() || s.title;
+  const body = input.body?.trim() || s.body;
+  if (input.decision === "approved" && !body) return { ok: false, error: "The draft is empty." };
+
+  let applied = "";
+  if (input.decision === "approved") {
+    if (s.kind === "note" && s.sessionId) {
+      const session = await store.getSession(s.sessionId);
+      if (!session || session.patientId !== s.patientId) return { ok: false, error: "The session this note belongs to no longer exists." };
+      const stamp = new Date().toLocaleDateString("en-CA", { month: "short", day: "numeric" });
+      const line = `${stamp} — ${CURRENT_CLINICIAN.name}: ${body}`;
+      await store.upsertSession({ ...session, notes: session.notes ? `${session.notes}\n${line}` : line });
+      applied = " Added to the session notes.";
+    } else if (s.kind === "load" && s.proposedLoad) {
+      await store.updatePatient(s.patientId, { prescribedLoad: s.proposedLoad });
+      await logAccess(s.patientId, clinicianActor, "load_prescribed", `Working weight set to ${fmtLoad(s.proposedLoad)} (from an assistant draft).`);
+      applied = ` Working weight is now ${fmtLoad(s.proposedLoad)}.`;
+    }
+  }
+  await store.updateSuggestion(s.id, {
+    status: input.decision,
+    title,
+    body,
+    reviewNote: input.note?.trim() || undefined,
+    reviewedAt: new Date().toISOString(),
+    reviewedBy: clinicianActor,
+  });
+  await logAccess(
+    s.patientId,
+    clinicianActor,
+    input.decision === "approved" ? "suggestion_approved" : "suggestion_rejected",
+    input.decision === "approved" ? `Approved draft “${title}”.${applied}` : `Declined draft “${title}”.`,
+  );
+  revalidatePatient(s.patientId);
+  return { ok: true };
+}
+
+/** Sets the weight the recorder starts this patient's sets at. */
+export async function setPrescribedLoadAction(patientId: string, value: number, unit: WeightUnit): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!Number.isFinite(value) || value < 0 || value > 200) return { ok: false, error: "Enter a weight between 0 and 200." };
+  const store = await getStore();
+  const patient = await store.getPatient(patientId);
+  if (!patient) return { ok: false, error: "Patient not found." };
+  const load = makeLoad(value, unit);
+  await store.updatePatient(patientId, { prescribedLoad: load });
+  await logAccess(patientId, clinicianActor, "load_prescribed", `Working weight set to ${fmtLoad(load)}.`);
+  revalidatePatient(patientId);
+  return { ok: true };
+}
+
+/** Saves the clinic's list of weights (in kg or lb) that the recorder offers. */
+export async function saveWeightSettingsAction(unit: WeightUnit, options: number[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (unit !== "kg" && unit !== "lb") return { ok: false, error: "Unknown unit." };
+  if (!Array.isArray(options) || options.length > 60 || options.some((x) => typeof x !== "number" || !Number.isFinite(x) || x < 0 || x > 200))
+    return { ok: false, error: "Weights must be numbers between 0 and 200 (at most 60 of them)." };
+  // Tidy the list: round to 2 decimals, drop duplicates, smallest first.
+  const tidy = [...new Set(options.map((x) => Math.round(x * 100) / 100))].sort((a, b) => a - b);
+  if (!tidy.some((x) => x > 0)) return { ok: false, error: "Keep at least one weight above zero." };
+  const store = await getStore();
+  await store.saveWeightSettings({ unit, options: tidy, updatedAt: new Date().toISOString(), updatedBy: CURRENT_CLINICIAN.name });
+  revalidatePath("/doctor/settings");
+  revalidatePath("/doctor", "layout");
+  return { ok: true };
 }

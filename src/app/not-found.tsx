@@ -1,3 +1,11 @@
+// =============================================================================
+// not-found.tsx : PAGE NOT FOUND
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The friendly screen shown when an address does not exist, with a way back.
+// =============================================================================
+
 import { SearchX } from "lucide-react";
 import { Logo } from "@/components/nav";
 import { ButtonLink, Card, PageContainer } from "@/components/ui";

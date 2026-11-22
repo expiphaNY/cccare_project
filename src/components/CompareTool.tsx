@@ -1,3 +1,13 @@
+// =============================================================================
+// CompareTool.tsx : COMPARING RECORDINGS OVER TIME
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Lets the clinician pick recordings of the same exercise (for example the first and the latest),
+//   overlays their signals on one chart, and writes the change in plain words. Raw and rectified views
+//   are offered only when every chosen recording has them.
+// =============================================================================
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -40,12 +50,12 @@ export function CompareTool({
   recordings: CompareRecording[];
   exercises: { key: string; name: string; muscle: string }[];
   access: string;
-  audience: "clinician" | "patient" | "recipient";
+  audience: "clinician" | "recipient";
   initialExercise?: string;
   initialIds?: string[];
 }) {
   const plain = audience !== "clinician";
-  const simple = audience === "patient";
+  const simple = false;
   const [exercise, setExercise] = useState(initialExercise ?? exercises[0]?.key);
   const [selected, setSelected] = useState<{ id: string; slot: number }[]>(() =>
     (initialIds ?? []).slice(0, MAX).map((id, slot) => ({ id, slot })),

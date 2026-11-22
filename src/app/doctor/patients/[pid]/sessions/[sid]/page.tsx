@@ -1,3 +1,12 @@
+// =============================================================================
+// page.tsx : ONE SESSION, SET BY SET
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Loads one session and shows it with components/SessionDetail.tsx: the sets, their signals, the
+//   rep cross-check, shakiness, notes and the raw samples.
+// =============================================================================
+
 import { notFound } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
 import { SetSwitch } from "@/components/demo/SetSwitch";

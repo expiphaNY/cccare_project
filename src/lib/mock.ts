@@ -1,18 +1,82 @@
-// Mock data. Replaced by real device uploads (POST /api/ingest) in production.
-// Everything is deterministic so the demo looks the same on every machine.
+// =============================================================================
+// mock.ts : THE MADE-UP DEMO PATIENTS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Builds the demo patients, sessions and recordings. Everything is deterministic (the same seed always
+//   gives the same data), so the demo looks identical on every computer. Each recording is described by a
+//   few settings; its signals are regenerated from them (lib/signal.ts) and measured with the same code as
+//   real recordings. Real recordings from the sensor are saved by api/record/route.ts.
+// =============================================================================
 
-import { analyzeSignal, generateSignal, hashString, mulberry32, synthDuration, DEFAULT_FS } from "./signal";
+import { analyzeSignal, generateMotion, generateSignal, hashString, mulberry32, synthDuration, DEFAULT_FS } from "./signal";
+import { verifyReps } from "./rep-verify";
+import { analyzeTremor } from "./tremor";
 import type {
   AuditEvent,
   Clinician,
   ExerciseKey,
+  Load,
   Patient,
   Recording,
   Session,
   Share,
   Side,
 } from "./types";
-import { EXERCISES } from "./types";
+import { DEFAULT_WEIGHTS, EXERCISES, makeLoad } from "./types";
+
+/** Snaps a kg value to the nearest default dumbbell. */
+function snapKg(kg: number) {
+  return DEFAULT_WEIGHTS.options.reduce((a, b) => (Math.abs(b - kg) < Math.abs(a - kg) ? b : a), DEFAULT_WEIGHTS.options[0]);
+}
+
+/**
+ * Deterministic load for a synthetic session: each patient starts light and
+ * steps up roughly every other session. Used by the seed and to backfill seed
+ * recordings that were stored before loads existed.
+ */
+export function synthLoad(patientId: string, sessionIndex: number): Load {
+  const start = 1 + (hashString(patientId + "load") % 4) * 0.5;
+  return makeLoad(snapKg(start + Math.floor(sessionIndex / 2) * 0.5), "kg");
+}
+
+/** Session index from a seed session id ("p-001-s07" → 6). */
+export function synthSessionIndex(sessionId: string) {
+  const m = /-s(\d+)$/.exec(sessionId);
+  return m ? Number(m[1]) - 1 : 0;
+}
+
+/**
+ * Synthetic tremor for a session. p-002 (post-stroke) has a slower, larger
+ * tremor that eases as rehab goes on; everyone else has physiological tremor
+ * that grows with the weight lifted.
+ */
+export function synthTremor(patientId: string, sessionIndex: number, setNumber = 1) {
+  const h = hashString(patientId + "tremor" + sessionIndex + "-" + setNumber);
+  const jitter = 1 + ((h % 1000) / 1000 - 0.5) * 0.25;
+  if (patientId === "p-002") return { tremorMg: r1(Math.max(14, 40 * (1 - sessionIndex / 26)) * jitter), tremorHz: 5.25 + (h % 4) * 0.25 };
+  const kg = synthLoad(patientId, sessionIndex).kg;
+  return { tremorMg: r1((2.5 + (hashString(patientId) % 3) + 0.9 * kg + 0.6 * (setNumber - 1)) * jitter), tremorHz: 8.5 + (hashString(patientId) % 8) * 0.25 };
+}
+
+/** Synth params with tremor filled in (older stored recordings lack it). */
+function withTremor(r: Pick<Recording, "patientId" | "sessionId" | "setNumber">, synth: NonNullable<Recording["synth"]>) {
+  return synth.tremorMg != null ? synth : { ...synth, ...synthTremor(r.patientId, synthSessionIndex(r.sessionId), r.setNumber) };
+}
+
+/** Load, EMG/accelerometer rep cross-check and tremor for a synthetic recording. */
+export function synthExtras(r: Pick<Recording, "patientId" | "sessionId" | "setNumber" | "synth" | "sampleRateHz">) {
+  const load = synthLoad(r.patientId, synthSessionIndex(r.sessionId));
+  if (!r.synth) return { load };
+  const synth = withTremor(r, r.synth);
+  const sig = generateSignal(synth, r.sampleRateHz);
+  const motion = generateMotion(synth, r.sampleRateHz);
+  const v = verifyReps(sig.envelope, sig.fs, motion);
+  const tremor = v.motion ? analyzeTremor(motion, sig.fs, v.motion, 50).metrics : undefined;
+  return { load, synth, repCheck: v.check, ...(tremor && { tremor }) };
+}
+
+const r1 = (v: number) => Math.round(v * 10) / 10;
 
 export const CLINICIANS: Clinician[] = [
   { id: "c-01", name: "Dr. Amelia Hart", title: "PT, DPT", clinic: "Northside Rehabilitation Clinic" },
@@ -221,6 +285,7 @@ export function buildSeed(): SeedData {
       storageRegion: "Encrypted MongoDB cluster · Canada (Central) region",
       retentionPolicy: "Kept while you are in care, then 10 years (provincial record-keeping rule), unless you delete it sooner where the law allows.",
     };
+    patient.prescribedLoad = synthLoad(pr.id, pr.sessions);
     patients.push(patient);
     log({
       patientId: pr.id,
@@ -273,9 +338,14 @@ export function buildSeed(): SeedData {
             reps,
             fatigue: 0.12 + rand() * 0.1 - Math.min(0.08, s * 0.006),
             spectralFatigue: 0.18 + rand() * 0.06 - Math.min(0.08, s * 0.005),
+            ...synthTremor(pr.id, s, set),
           };
           const sig = generateSignal(synth);
           const metrics = analyzeSignal(sig.raw, sig.rectified, sig.envelope, sig.fs);
+          const motion = generateMotion(synth);
+          const v = verifyReps(sig.envelope, sig.fs, motion);
+          const repCheck = v.check;
+          const tremor = v.motion ? analyzeTremor(motion, sig.fs, v.motion, 50).metrics : undefined;
           const recordedAt = new Date(new Date(startedAt).getTime() + minute * 60000);
           minute += 2 + Math.floor(rand() * 2);
           recordings.push({
@@ -294,7 +364,11 @@ export function buildSeed(): SeedData {
             deviceId,
             metrics,
             source: "synthetic",
+            hasMotion: true,
             synth,
+            load: synthLoad(pr.id, s),
+            repCheck,
+            ...(tremor && { tremor }),
           });
         }
       }

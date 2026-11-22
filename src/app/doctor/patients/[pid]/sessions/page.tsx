@@ -1,3 +1,11 @@
+// =============================================================================
+// page.tsx : SESSIONS TAB
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   A table of every session for one patient, newest first.
+// =============================================================================
+
 import { notFound } from "next/navigation";
 import { SessionsTable } from "@/components/SessionsTable";
 import { Card, CardHeader } from "@/components/ui";

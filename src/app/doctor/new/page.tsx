@@ -1,3 +1,11 @@
+// =============================================================================
+// page.tsx : NEW PATIENT PAGE
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The page that holds the form for creating a patient profile (components/NewPatientForm.tsx).
+// =============================================================================
+
 import { Breadcrumbs, Card, PageContainer } from "@/components/ui";
 import { NewPatientForm } from "@/components/NewPatientForm";
 import { EXERCISES } from "@/lib/types";

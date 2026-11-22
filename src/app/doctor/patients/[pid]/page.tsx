@@ -1,8 +1,21 @@
+// =============================================================================
+// page.tsx : PATIENT OVERVIEW TAB
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The summary of one patient: a card per exercise, the working-weight (load) card, the trend chart
+//   with six metrics, recent sessions, clinician notes and the access log. Clicking a point on the
+//   trend chart opens that session.
+// =============================================================================
+
 import { metricAvailable } from "@/lib/analytics";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, Home, MapPin, NotebookPen } from "lucide-react";
 import { ExerciseCards } from "@/components/ExerciseCards";
+import { NoteList } from "@/components/NoteList";
+import { LoadCard, TremorCard, type LoadPoint, type TremorPoint } from "@/components/LoadCard";
+import { fmtLoad } from "@/lib/types";
 import { TrendPanel } from "@/components/charts/TrendPanel";
 import { RepBars, Sparkline } from "@/components/charts/Sparkline";
 import { AccessLog } from "@/components/transparency";
@@ -13,6 +26,7 @@ import { fmtDate, fmtShortDate, fmtTime, fullName } from "@/lib/format";
 import { getStore } from "@/lib/store";
 import { EXERCISES } from "@/lib/types";
 import { summaries, trendProps } from "@/lib/viewmodels";
+import { agentTarget } from "@/lib/agent/target";
 
 export default async function PatientOverview({ params }: PageProps<"/doctor/patients/[pid]">) {
   const { pid } = await params;
@@ -21,7 +35,46 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
   const { patient: p, sessions, recordings } = bundle;
   if (shouldLog(`clin|${pid}|profile`, 10 * 60_000)) await logAccess(pid, clinicianActor, "profile_viewed", "Opened patient overview.");
   const store = await getStore();
-  const audit = await store.listAudit(pid);
+  const [audit, weights] = await Promise.all([store.listAudit(pid), store.getWeightSettings()]);
+  const loadPoints: LoadPoint[] = sessions.flatMap((s) => {
+    const recs = recordings.filter((r) => r.sessionId === s.id);
+    const loaded = recs.filter((r) => r.load);
+    if (!loaded.length) return [];
+    const top = loaded.reduce((a, b) => (b.load!.kg > a.load!.kg ? b : a));
+    const checked = recs.filter((r) => r.repCheck && r.repCheck.status !== "no-motion");
+    const e = checked.reduce((t, r) => t + r.repCheck!.emgReps + r.repCheck!.motionReps, 0);
+    const v = checked.reduce((t, r) => t + r.repCheck!.verifiedReps, 0);
+    return [
+      {
+        sessionId: s.id,
+        date: s.startedAt.slice(0, 10),
+        kg: top.load!.kg,
+        label: top.load!.value === 0 ? "None" : `${top.load!.value}${top.load!.unit}`,
+        verified: checked.length ? v : null,
+        emg: recs.reduce((t, r) => t + r.metrics.repsDetected, 0),
+        agreementPct: e ? Math.floor(((2 * v) / e) * 100) : null,
+      },
+    ];
+  });
+
+  // Shakiness: mean hold tremor per session (reliable sets only), and by weight.
+  const tremorPoints: TremorPoint[] = sessions.flatMap((s) => {
+    const recs = recordings.filter((r) => r.sessionId === s.id && r.tremor?.reliable);
+    if (!recs.length) return [];
+    const mg = recs.reduce((t, r) => t + r.tremor!.headlineMg, 0) / recs.length;
+    const top = recs.reduce((a, b) => (b.tremor!.headlineMg > a.tremor!.headlineMg ? b : a));
+    const loaded = recs.find((r) => r.load);
+    return [{ sessionId: s.id, date: s.startedAt.slice(0, 10), mg: Math.round(mg * 10) / 10, peakHz: top.tremor!.peakHz, rhythmic: top.tremor!.rhythmic, loadLabel: loaded ? fmtLoad(loaded.load) : null }];
+  });
+  const loadGroups = new Map<string, { label: string; kg: number; sum: number; sets: number }>();
+  for (const r of recordings)
+    if (r.tremor?.reliable && r.load) {
+      const g = loadGroups.get(fmtLoad(r.load)) ?? { label: fmtLoad(r.load), kg: r.load.kg, sum: 0, sets: 0 };
+      g.sum += r.tremor.headlineMg;
+      g.sets++;
+      loadGroups.set(g.label, g);
+    }
+  const tremorByLoad = [...loadGroups.values()].sort((a, b) => a.kg - b.kg).map((g) => ({ label: g.label, kg: g.kg, mg: Math.round((g.sum / g.sets) * 10) / 10, sets: g.sets }));
 
   const sums = summaries(p, recordings);
   const base = `/doctor/patients/${pid}`;
@@ -43,9 +96,21 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
 
   return (
     <div className="space-y-6">
-      <ExerciseCards summaries={sums} compareHref={`${base}/compare`} audience="clinician" />
+      <div {...agentTarget("exercise-cards", "Exercise summary cards (baseline, latest, best, status)")}>
+        <ExerciseCards summaries={sums} compareHref={`${base}/compare`} audience="clinician" />
+      </div>
 
-      <Card>
+      <div {...agentTarget("load-card", "Prescribed weight, weight per session and rep verification")}>
+        <LoadCard patientId={pid} prescribed={p.prescribedLoad} weights={weights} points={loadPoints} baseHref={base} />
+      </div>
+
+      {tremorPoints.length > 0 && (
+        <div {...agentTarget("tremor-card", "Shakiness (accelerometer tremor) per session and by weight")}>
+          <TremorCard points={tremorPoints} byLoad={tremorByLoad} baseHref={base} />
+        </div>
+      )}
+
+      <Card {...agentTarget("trend-chart", "Trend chart: one point per session")}>
         <CardHeader title="Trends" subtitle="One point per session (strongest set). Click a point to open that session." />
         <div className="pt-3">
           <TrendPanel
@@ -57,7 +122,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+        <Card className="lg:col-span-2" {...agentTarget("recent-sessions", "Recent sessions list")}>
           <CardHeader
             title="Recent sessions"
             action={
@@ -152,7 +217,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
                   <Link href={`${base}/sessions/${s.id}`} className="text-[12px] font-medium text-brand hover:underline">
                     {fmtShortDate(s.startedAt)} · {fmtTime(s.startedAt)}
                   </Link>
-                  <p className="whitespace-pre-line text-sm">{s.notes}</p>
+                  <NoteList patientId={p.id} sessionId={s.id} notes={s.notes!} editable className="mt-1" />
                 </li>
               ))
             ) : (
@@ -163,7 +228,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
         <Card>
           <CardHeader
             title="Recent access"
-            subtitle={`What ${p.firstName} sees in their access log.`}
+            subtitle="Who opened or changed this record."
             action={
               <Link href={`${base}/sharing`} className="inline-flex items-center gap-1 text-[13px] font-medium text-brand hover:underline">
                 Full log <ArrowRight className="size-3.5" aria-hidden />

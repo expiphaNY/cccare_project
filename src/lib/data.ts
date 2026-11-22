@@ -1,3 +1,11 @@
+// =============================================================================
+// data.ts : ONE PLACE TO READ AND LOG PATIENT DATA
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Helpers used by pages: write a line to the access log, find the clinician, gather everything about a patient in one bundle, create share tokens, and work out whether a share link is active, expired or revoked.
+// =============================================================================
+
 import "server-only";
 import { randomBytes, randomUUID } from "node:crypto";
 import { CLINICIANS, CURRENT_CLINICIAN } from "./mock";
@@ -15,10 +23,6 @@ export const clinicianActor: Actor = {
   name: CURRENT_CLINICIAN.name,
   id: CURRENT_CLINICIAN.id,
 };
-
-export function patientActor(p: Patient): Actor {
-  return { role: "patient", name: fullName(p), id: p.id };
-}
 
 export function clinicianById(id?: string) {
   return CLINICIANS.find((c) => c.id === id);

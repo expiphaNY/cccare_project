@@ -1,3 +1,11 @@
+// =============================================================================
+// NoteForm.tsx : FORM FOR ADDING A SESSION NOTE
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   A small text box with a save button that adds a note to a session through a server action.
+// =============================================================================
+
 "use client";
 
 import { useState, useTransition } from "react";
@@ -28,7 +36,7 @@ export function NoteForm({ patientId, sessionId }: { patientId: string; sessionI
         id={`note-${sessionId}`}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Add a note (visible to the patient)"
+        placeholder="Add a clinical note"
         className="min-h-10 flex-1 rounded-full border border-line-strong px-4 text-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/15"
       />
       <button type="submit" disabled={pending || !text.trim()} className={cx(btn.primary, btn.small, "min-h-10")}>

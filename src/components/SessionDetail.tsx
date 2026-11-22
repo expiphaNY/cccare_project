@@ -1,20 +1,32 @@
+// =============================================================================
+// SessionDetail.tsx : ONE SESSION, FOR THE CLINICIAN
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Session, then set, then raw signal. Shows the chosen set's signals, the one-line rep count with the
+//   muscle-versus-movement cross-check, notes, the wrap-up button for the assistant, and a table of the
+//   raw samples with a CSV download. It also warns when the sensor's envelope was stuck at its maximum,
+//   so peaks are known to be too low.
+// =============================================================================
+
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Download, Home, MapPin } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleCheck, Download, Dumbbell, Home, MapPin, TriangleAlert } from "lucide-react";
 import { METRICS, metricAvailable, type MetricKey } from "@/lib/analytics";
 import { clinicianById } from "@/lib/data";
 import { DEMO } from "@/lib/demo";
 import { fmtDate, fmtTime } from "@/lib/format";
 import type { Patient, Recording, Session, SignalData } from "@/lib/types";
-import { EXERCISES } from "@/lib/types";
+import { EXERCISES, fmtLoad } from "@/lib/types";
+import { REP_STATUS } from "@/lib/rep-verify";
 import { SignalViewer } from "./charts/SignalViewer";
 import { RepBars } from "./charts/Sparkline";
 import { NoteForm } from "./NoteForm";
-import { Badge, Card, CardHeader, DepthLadder, Disclosure, KeyValue, cx } from "./ui";
+import { NoteList } from "./NoteList";
+import { WrapUpButton } from "./agent/WrapUpButton";
+import { agentTarget } from "@/lib/agent/target";
+import { Badge, Card, CardHeader, DepthLadder, cx } from "./ui";
 
-/**
- * Session → set → raw signal. Shared by clinician and patient views; the
- * audience prop switches vocabulary and how much is shown by default.
- */
+/** Session → set → raw signal, for the clinician. */
 export function SessionDetail({
   patient,
   session,
@@ -33,19 +45,21 @@ export function SessionDetail({
   selectedId?: string;
   baseHref: string;
   access: string;
-  audience: "clinician" | "patient";
+  audience: "clinician";
   rawPreview?: SignalData | null;
 }) {
-  const plain = audience === "patient";
   const idx = sessions.findIndex((s) => s.id === session.id);
   const prev = sessions[idx - 1];
   const next = sessions[idx + 1];
   const recs = recordings.filter((r) => r.sessionId === session.id);
   const selected = recs.find((r) => r.id === selectedId) ?? recs.reduce((a, b) => (b.metrics.peakEnvelope > a.metrics.peakEnvelope ? b : a), recs[0]);
   const prevRecs = prev ? recordings.filter((r) => r.sessionId === prev.id && r.exercise === selected?.exercise) : [];
-  const prevBest = prevRecs.length ? Math.max(...prevRecs.map((r) => r.metrics.peakEnvelope)) : null;
+  const prevBestRec = prevRecs.length ? prevRecs.reduce((a, b) => (b.metrics.peakEnvelope > a.metrics.peakEnvelope ? b : a)) : null;
+  const prevBest = prevBestRec?.metrics.peakEnvelope ?? null;
+  const prevBestLoad = prevBestRec?.load ? fmtLoad(prevBestRec.load) : "";
+  const sessionLoads = [...new Set(recs.map((r) => fmtLoad(r.load)).filter((l) => l !== "—"))];
   const clin = clinicianById(session.clinicianId);
-  const metricKeys: MetricKey[] = plain ? ["peakEnvelope", "meanEnvelope", "fatigueIndex"] : (["peakEnvelope", "meanEnvelope", "rms", "iemg", "medianFreqHz", "fatigueIndex"] as MetricKey[]).filter((k) => !selected || metricAvailable(selected, k));
+  const metricKeys: MetricKey[] = (["peakEnvelope", "meanEnvelope", "rms", "iemg", "medianFreqHz", "fatigueIndex"] as MetricKey[]).filter((k) => !selected || metricAvailable(selected, k));
 
   return (
     <div className="space-y-6">
@@ -57,21 +71,19 @@ export function SessionDetail({
               {session.location === "clinic" ? <MapPin className="size-3" aria-hidden /> : <Home className="size-3" aria-hidden />}
               {session.location === "clinic" ? `Clinic${clin ? ` · ${clin.name}` : ""}` : "Home exercise"}
             </Badge>
-            {!plain && (
-              <Badge>
-                Session {idx + 1} of {sessions.length}
-              </Badge>
-            )}
+            <Badge>
+              Session {idx + 1} of {sessions.length}
+            </Badge>
             {session.painScore != null && <Badge tone={session.painScore >= 5 ? "warn" : "neutral"}>Pain {session.painScore}/10</Badge>}
           </div>
           <p className="mt-1 text-sm text-ink-2">
-            {plain
-              ? `Started ${fmtTime(session.startedAt)} · ${recs.length} set${recs.length === 1 ? "" : "s"}`
-              : `Started ${fmtTime(session.startedAt)} · ${recs.length} set${recs.length === 1 ? "" : "s"} recorded by ${recs[0]?.source === "ble" ? recs[0].deviceId : patient.device.id}`}
+            Started {fmtTime(session.startedAt)} · {recs.length} set{recs.length === 1 ? "" : "s"} recorded by {recs[0]?.source === "ble" ? recs[0].deviceId : patient.device.id}
+            {sessionLoads.length > 0 && <> · {sessionLoads.join(", ")}</>}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {!plain && <DepthLadder level={selectedId ? 3 : 1} />}
+          {audience === "clinician" && <WrapUpButton />}
+          <DepthLadder level={selectedId ? 3 : 1} />
           <nav className="flex gap-1" aria-label="Session navigation">
             <NavBtn href={prev ? `${baseHref}/${prev.id}` : undefined} label="Previous session">
               <ChevronLeft className="size-4" aria-hidden />
@@ -84,7 +96,7 @@ export function SessionDetail({
       </div>
 
       {/* Set picker: macro → micro */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2" {...agentTarget("set-picker", "Set picker: the sets recorded in this session")}>
         {patient.exercises.map((ex) => {
           const sets = recs.filter((r) => r.exercise === ex);
           if (!sets.length) return null;
@@ -115,7 +127,10 @@ export function SessionDetail({
                         {r.metrics.peakEnvelope.toFixed(2)}
                         <span className="ml-0.5 text-[12px] font-normal text-ink-3">mV</span>
                       </div>
-                      <div className="text-[12px] text-ink-2">{r.metrics.repsDetected} reps</div>
+                      <div className="mt-0.5 flex items-center gap-1 text-[12px] text-ink-2">
+                        <Dumbbell className="size-3 text-ink-3" aria-hidden /> {fmtLoad(r.load)}
+                      </div>
+                      <RepLine r={r} />
                     </Link>
                   );
                 })}
@@ -127,48 +142,42 @@ export function SessionDetail({
 
       {selected && (
         <>
-          <Card>
+          <Card {...agentTarget("signal-chart", "Muscle signal chart for the selected set (shaded bands = reps)")}>
             <CardHeader
-              eyebrow={plain ? `Set ${selected.setNumber} · ${fmtTime(selected.recordedAt)}` : `Set ${selected.setNumber} · ${fmtTime(selected.recordedAt)} · ${selected.durationS}s @ ${selected.sampleRateHz} Hz`}
-              title={`${EXERCISES[selected.exercise].name} — ${plain ? "your muscle signal" : "signal"}`}
-              subtitle={
-                plain
-                  ? "Each shaded band is one repetition. Taller = your muscle worked harder."
-                  : "Shaded bands = detected contractions. Drag, use the slider, +/− keys or pinch to zoom; cursor is synced across channels."
-              }
+              eyebrow={`Set ${selected.setNumber} · ${fmtTime(selected.recordedAt)} · ${selected.durationS}s @ ${selected.sampleRateHz} Hz`}
+              title={`${EXERCISES[selected.exercise].name} — signal${selected.load ? ` · ${fmtLoad(selected.load)}` : ""}`}
+              subtitle="Shaded bands = detected contractions. Below the EMG, the accelerometer and a rep cross-check confirm each rep with movement. Drag, use the slider, +/− keys or pinch to zoom; cursor is synced across charts."
             />
             {(selected.capture?.clippedPct ?? 0) >= 2 && !selected.capture?.rawStreamed && (
               <p className="mx-5 mt-3 rounded-xl bg-warn-soft px-3 py-2 text-[13px] text-warn sm:mx-6" role="note">
-                {plain
-                  ? `The sensor was at the top of its scale for ${selected.capture!.clippedPct}% of this set, so your strongest moments read lower than they really were.`
-                  : `Sensor envelope at its maximum for ${selected.capture!.clippedPct}% of this set: peaks were cut off, so peak and area values here are underestimates.`}
+                {`Sensor envelope at its maximum for ${selected.capture!.clippedPct}% of this set: peaks were cut off, so peak and area values here are underestimates.`}
               </p>
             )}
             <div className="pt-4">
-              <SignalViewer key={selected.id} recordingId={selected.id} access={access} audience={audience} />
+              <SignalViewer key={selected.id} recordingId={selected.id} access={access} audience={audience} tremor={selected.tremor} />
             </div>
           </Card>
 
           <div className="grid gap-6 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
-              <CardHeader title={plain ? "What this set shows" : "Set metrics"} />
+            <Card className="lg:col-span-2" {...agentTarget("set-metrics", "Numbers for the selected set")}>
+              <CardHeader title="Set metrics" />
               <dl className="grid grid-cols-2 gap-x-6 gap-y-5 px-5 pb-5 pt-4 sm:grid-cols-3 sm:px-6">
                 {metricKeys.map((k) => (
-                  <div key={k}>
+                  <div key={k} {...agentTarget(`metric-${k}`, `${METRICS[k].label} for this set`)}>
                     <dt className="text-[12px] text-ink-2" title={METRICS[k].help}>
-                      {plain ? METRICS[k].plain : METRICS[k].label}
+                      {METRICS[k].label}
                     </dt>
                     <dd className="tabular mt-0.5 text-xl font-semibold">
                       {(selected.metrics[k] as number).toFixed(METRICS[k].digits)}
                       <span className="ml-1 text-[13px] font-normal text-ink-3">{METRICS[k].unit}</span>
                     </dd>
-                    {!plain && <p className="mt-0.5 text-[11px] leading-snug text-ink-3">{METRICS[k].help}</p>}
+                    <p className="mt-0.5 text-[11px] leading-snug text-ink-3">{METRICS[k].help}</p>
                   </div>
                 ))}
               </dl>
               {prevBest != null && (
-                <p className="border-t border-line px-5 py-3 text-[13px] text-ink-2 sm:px-6">
-                  {plain ? "Compared with your previous session" : "Previous session best"}:{" "}
+                <p className="border-t border-line px-5 py-3 text-[13px] text-ink-2 sm:px-6" {...agentTarget("previous-comparison", "Comparison with the previous session")}>
+                  Previous session best{prevBestLoad ? ` (${prevBestLoad})` : ""}:{" "}
                   <b className="text-ink tabular">{prevBest.toFixed(2)} mV</b>
                   {" → "}
                   <b className="text-ink tabular">{selected.metrics.peakEnvelope.toFixed(2)} mV</b> (
@@ -176,11 +185,11 @@ export function SessionDetail({
                 </p>
               )}
             </Card>
-            <Card>
-              <CardHeader title={plain ? "Each repetition" : "Per-rep peak"} subtitle={plain ? "Did your effort hold up to the end?" : "Envelope maximum per contraction"} />
+            <Card {...agentTarget("rep-bars", "Peak of each repetition in this set")}>
+              <CardHeader title="Per-rep peak" subtitle="Envelope maximum per contraction" />
               <div className="px-5 pb-5 pt-4 sm:px-6">
                 <RepBars values={selected.metrics.repPeaks} height={88} />
-                {!plain && selected.metrics.repMedianFreq.length > 0 && metricAvailable(selected, "medianFreqHz") && (
+                {selected.metrics.repMedianFreq.length > 0 && metricAvailable(selected, "medianFreqHz") && (
                   <p className="mt-3 text-[12px] text-ink-2">
                     MDF per rep (Hz): <span className="tabular text-ink">{selected.metrics.repMedianFreq.map((f) => f.toFixed(0)).join(" · ")}</span>
                   </p>
@@ -188,25 +197,6 @@ export function SessionDetail({
               </div>
             </Card>
           </div>
-
-          {plain && (
-            <div className="-mt-2">
-              <Disclosure summary="About this recording">
-                <Card className="p-5 sm:p-6">
-                  <KeyValue
-                    items={[
-                      { k: "Exercise", v: `${EXERCISES[selected.exercise].name} · set ${selected.setNumber}` },
-                      { k: "Recorded", v: `${fmtDate(selected.recordedAt)} at ${fmtTime(selected.recordedAt)}` },
-                      { k: "Length", v: `${selected.durationS} seconds, ${selected.metrics.repsDetected} repetitions` },
-                      { k: "Sensor", v: selected.deviceId },
-                      { k: "Detail", v: `${selected.sampleRateHz} readings per second, in ${selected.units}` },
-                      { k: "Recording ID", v: <span className="font-mono text-[13px]">{selected.id}</span> },
-                    ]}
-                  />
-                </Card>
-              </Disclosure>
-            </div>
-          )}
 
           {audience === "clinician" && rawPreview && (
             <Card>
@@ -258,10 +248,14 @@ export function SessionDetail({
         </>
       )}
 
-      <Card>
-        <CardHeader title={plain ? "Notes from your clinician" : "Session notes"} />
+      <Card {...agentTarget("session-notes", "Clinician notes for this session")}>
+        <CardHeader title="Session notes" />
         <div className="px-5 pb-5 pt-3 sm:px-6">
-          {session.notes ? <p className="whitespace-pre-line text-sm">{session.notes}</p> : <p className="text-sm text-ink-2">No notes for this session.</p>}
+          {session.notes ? (
+            <NoteList patientId={patient.id} sessionId={session.id} notes={session.notes} editable={audience === "clinician"} />
+          ) : (
+            <p className="text-sm text-ink-2">No notes for this session.</p>
+          )}
           {audience === "clinician" && <NoteForm patientId={patient.id} sessionId={session.id} />}
         </div>
       </Card>
@@ -279,5 +273,18 @@ function NavBtn({ href, label, children }: { href?: string; label: string; child
     <span aria-hidden className={cx(cls, "text-line-strong")}>
       {children}
     </span>
+  );
+}
+
+/** One-line rep count with the EMG/accelerometer cross-check. */
+function RepLine({ r }: { r: Recording }) {
+  const c = r.repCheck;
+  if (!c || c.status === "no-motion") return <div className="text-[12px] text-ink-2">{r.metrics.repsDetected} reps · EMG only</div>;
+  const st = REP_STATUS[c.status];
+  return (
+    <div className={cx("mt-0.5 flex items-center gap-1 text-[12px]", st.tone === "good" ? "text-good" : st.tone === "bad" ? "text-bad" : "text-warn")} title={`${st.label}: EMG ${c.emgReps}, movement ${c.motionReps}. ${st.help}`}>
+      {c.status === "verified" ? <CircleCheck className="size-3" aria-hidden /> : <TriangleAlert className="size-3" aria-hidden />}
+      {c.verifiedReps} verified{c.status !== "verified" && ` · ${c.emgReps}/${c.motionReps}`}
+    </div>
   );
 }

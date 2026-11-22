@@ -1,3 +1,11 @@
+// =============================================================================
+// StoreWarning.tsx : DEVELOPMENT WARNING BANNER
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   A banner shown only while developing, when the database is configured but cannot be reached and the app has fallen back to the local file.
+// =============================================================================
+
 import { TriangleAlert } from "lucide-react";
 import { DEMO } from "@/lib/demo";
 import { getStoreFallback } from "@/lib/store";

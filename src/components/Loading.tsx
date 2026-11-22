@@ -1,3 +1,11 @@
+// =============================================================================
+// Loading.tsx : LOADING SKELETON
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   A grey placeholder shaped like a normal page, shown while the real page loads.
+// =============================================================================
+
 import { PageContainer } from "./ui";
 
 export function PageSkeleton() {

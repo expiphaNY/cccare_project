@@ -1,3 +1,11 @@
+// =============================================================================
+// ShareDialog.tsx : THE SHARE-LINK DIALOG
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The window for creating an expiring share link: who it is for, why, how long it lasts, which sessions it shows and whether raw signals are included.
+// =============================================================================
+
 "use client";
 
 import { useRef, useState, useTransition } from "react";
@@ -14,7 +22,7 @@ export function ShareDialog({
   triggerLabel = "Share",
   triggerVariant = "primary",
 }: {
-  as: "clinician" | "patient";
+  as: "clinician";
   patientId: string;
   patientName: string;
   sessions: { id: string; label: string }[];
@@ -77,7 +85,7 @@ export function ShareDialog({
           <div className="flex items-start justify-between gap-3 border-b border-line px-6 pb-4 pt-5">
             <div>
               <h2 id="share-title" className="title text-lg font-semibold">
-                {token ? "Link ready" : `Share ${as === "patient" ? "your" : `${patientName}'s`} record`}
+                {token ? "Link ready" : `Share ${patientName}'s record`}
               </h2>
               <p className="mt-0.5 text-sm text-ink-2">
                 {token

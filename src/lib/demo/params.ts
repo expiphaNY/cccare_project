@@ -1,3 +1,11 @@
+// =============================================================================
+// params.ts : STATIC DEMO ONLY: PAGES TO PRE-BUILD
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Lists the patients, sessions and share links the static demo must build ahead of time, because a static site cannot make pages on request.
+// =============================================================================
+
 import "server-only";
 import { getStore } from "@/lib/store";
 

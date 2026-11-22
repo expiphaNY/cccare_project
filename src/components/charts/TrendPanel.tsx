@@ -1,3 +1,11 @@
+// =============================================================================
+// TrendPanel.tsx : THE TREND CHART
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Plots one metric across sessions with a menu of six metrics (peak, mean, RMS, integrated EMG, median frequency, fatigue) and opens the session when a point is clicked. Metrics that need raw data are hidden for sets that lack it.
+// =============================================================================
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -30,7 +38,7 @@ export interface TrendPanelProps {
   metrics: MetricKey[];
   /** Where clicking a point goes; session id is appended. Omit to disable drill-down. */
   sessionHref?: string;
-  audience: "clinician" | "patient";
+  audience: "clinician";
   height?: number;
 }
 
@@ -130,7 +138,7 @@ export function TrendPanel({ exercises, trends, metrics, sessionHref, audience, 
         .join("");
       const base =
         baseline != null
-          ? `<div style="color:#5c6b82">${swatch("#8a97ab", true)}${audience === "patient" ? "Where you started" : "Baseline"}: ${fmtNum(baseline, def.digits)} ${def.unit}</div>`
+          ? `<div style="color:#5c6b82">${swatch("#8a97ab", true)}Baseline: ${fmtNum(baseline, def.digits)} ${def.unit}</div>`
           : "";
       return `<div style="font-weight:600;margin-bottom:4px">${fmtDate(new Date(t * 1000).toISOString(), { weekday: "short", year: undefined })} · ${fmtTime(new Date(t * 1000).toISOString())}</div>${rows}${base}${
         sessionHref ? `<div style="color:#0b63ce;margin-top:4px">Click to open session →</div>` : ""
@@ -150,7 +158,7 @@ export function TrendPanel({ exercises, trends, metrics, sessionHref, audience, 
             size="sm"
             options={metrics.map((m) => ({
               value: m,
-              label: audience === "patient" ? METRICS[m].plain : METRICS[m].label,
+              label: METRICS[m].label,
               title: METRICS[m].help,
             }))}
           />
@@ -189,7 +197,7 @@ export function TrendPanel({ exercises, trends, metrics, sessionHref, audience, 
         {baseline != null && (
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block w-4 border-t-2 border-dashed border-[#8a97ab]" />
-            {audience === "patient" ? "Where you started" : "Baseline (first session)"}
+            Baseline (first session)
           </span>
         )}
         {sessionHref && <span className="ml-auto text-ink-3">Tip: click any point to open that session</span>}

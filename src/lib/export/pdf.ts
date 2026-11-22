@@ -1,4 +1,11 @@
-// PDF report built with pdf-lib (pure JS, no headless browser needed).
+// =============================================================================
+// pdf.ts : EXPORT AS A PDF REPORT
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   A PDF report built with pdf-lib (pure JavaScript, no headless browser needed). Metrics that a
+//   recording cannot supply are left out rather than shown as zero.
+// =============================================================================
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { metricAvailable, summarize } from "../analytics";

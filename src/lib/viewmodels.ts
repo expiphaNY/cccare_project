@@ -1,4 +1,11 @@
-// Shapes server data into the small, serialisable props client charts need.
+// =============================================================================
+// viewmodels.ts : SHAPING DATA FOR CHARTS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Turns server data into the small, plain props the client-side charts need, so the charts hold no
+//   data-fetching logic.
+// =============================================================================
 
 import { summarize, trendFor, type MetricKey } from "./analytics";
 import type { Patient, Recording, Session } from "./types";

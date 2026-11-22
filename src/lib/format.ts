@@ -1,3 +1,11 @@
+// =============================================================================
+// format.ts : DATES, TIMES AND NAMES AS TEXT
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Small functions that turn dates, times, ages, percentages and names into the text shown on screen, all in one time zone so every page agrees.
+// =============================================================================
+
 const TZ = "America/Toronto";
 
 export function fmtDate(iso: string, opts: Intl.DateTimeFormatOptions = {}) {

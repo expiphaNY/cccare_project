@@ -1,3 +1,13 @@
+// =============================================================================
+// layout.tsx : THE ROOT OF EVERY PAGE
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The outermost page shell: the page title, an instruction to search engines not to index the site
+//   (it holds health data), the theme colour and the development-only banner that warns when the
+//   database is configured but unreachable.
+// =============================================================================
+
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { StoreWarning } from "@/components/StoreWarning";

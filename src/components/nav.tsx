@@ -1,9 +1,17 @@
+// =============================================================================
+// nav.tsx : NAVIGATION BARS AND THE LOGO
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The top bar for clinicians, the plainer bar for people opening a share link, and the tab row inside a patient's record.
+// =============================================================================
+
 "use client";
 
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { Suspense, type ReactNode } from "react";
-import { Activity, ArrowLeftRight, CalendarDays, Layers, ShieldCheck, TrendingUp } from "lucide-react";
+import { Activity } from "lucide-react";
 import { cx } from "./ui";
 
 export function Logo({ href = "/" }: { href?: string }) {
@@ -17,8 +25,8 @@ export function Logo({ href = "/" }: { href?: string }) {
   );
 }
 
-function HeaderShell({ children, role }: { children: ReactNode; role: "clinician" | "patient" | "shared" }) {
-  const label = { clinician: "Clinician view", patient: "Patient view", shared: "Shared record · read-only" }[role];
+function HeaderShell({ children, role }: { children: ReactNode; role: "clinician" | "shared" }) {
+  const label = { clinician: "Clinician view", shared: "Shared record · read-only" }[role];
   return (
     <header className="material no-print sticky top-0 z-40 border-b border-line/80">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-6 lg:px-8">
@@ -32,27 +40,19 @@ function HeaderShell({ children, role }: { children: ReactNode; role: "clinician
           >
             {label}
           </span>
-          {role !== "shared" && (
-            <Link
-              href="/"
-              className="pressable inline-flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-ink-2 hover:bg-brand-soft hover:text-brand"
-            >
-              <ArrowLeftRight className="size-3.5" aria-hidden />
-              <span className="hidden sm:inline">Switch view</span>
-            </Link>
-          )}
         </div>
       </div>
     </header>
   );
 }
 
-function NavLinks({ items, exact }: { items: { href: string; label: string }[]; exact?: string[] }) {
+function NavLinks({ items, exact }: { items: { href: string; label: string; except?: string[] }[]; exact?: string[] }) {
   const pathname = usePathname();
   return (
     <>
       {items.map((it) => {
-        const active = exact?.includes(it.href) ? pathname === it.href : pathname === it.href || pathname.startsWith(it.href + "/");
+        const base = exact?.includes(it.href) ? pathname === it.href : pathname === it.href || pathname.startsWith(it.href + "/");
+        const active = base && !it.except?.some((x) => pathname === x || pathname.startsWith(x + "/"));
         return <NavItem key={it.href} href={it.href} label={it.label} active={active} />;
       })}
     </>
@@ -76,7 +76,9 @@ function NavItem({ href, label, active }: { href: string; label: string; active?
 
 export function ClinicianHeader() {
   const items = [
-    { href: "/doctor", label: "Patients" },
+    { href: "/doctor", label: "Patients", except: ["/doctor/suggestions", "/doctor/settings"] },
+    { href: "/doctor/suggestions", label: "Drafts" },
+    { href: "/doctor/settings", label: "Weights" },
     { href: "/data-handling", label: "Data handling" },
   ];
   return (
@@ -88,73 +90,6 @@ export function ClinicianHeader() {
         </Suspense>
       </nav>
     </HeaderShell>
-  );
-}
-
-function PatientNavInner() {
-  const { pid } = useParams<{ pid: string }>();
-  const base = `/patient/${pid}`;
-  const items = [
-    { href: base, label: "Progress" },
-    { href: `${base}/sessions`, label: "Sessions" },
-    { href: `${base}/compare`, label: "Compare" },
-    { href: `${base}/privacy`, label: "My data" },
-  ];
-  return <NavLinks items={items} exact={[base]} />;
-}
-
-export function PatientHeader() {
-  return (
-    <>
-      <HeaderShell role="patient">
-        <Logo href="/" />
-        <nav aria-label="Primary" className="ml-2 hidden items-center gap-1 sm:flex">
-          <Suspense fallback={<span className="h-9" />}>
-            <PatientNavInner />
-          </Suspense>
-        </nav>
-      </HeaderShell>
-      <Suspense fallback={null}>
-        <PatientTabBar />
-      </Suspense>
-    </>
-  );
-}
-
-/** Phone-sized bottom tab bar (iOS pattern): always-visible primary destinations. */
-function PatientTabBar() {
-  const { pid } = useParams<{ pid: string }>();
-  const pathname = usePathname();
-  const base = `/patient/${pid}`;
-  const items = [
-    { href: base, label: "Progress", Icon: TrendingUp },
-    { href: `${base}/sessions`, label: "Sessions", Icon: CalendarDays },
-    { href: `${base}/compare`, label: "Compare", Icon: Layers },
-    { href: `${base}/privacy`, label: "My data", Icon: ShieldCheck },
-  ];
-  return (
-    <nav
-      aria-label="Primary"
-      className="material no-print fixed inset-x-0 bottom-0 z-40 border-t border-line/80 pb-[env(safe-area-inset-bottom)] sm:hidden"
-    >
-      <ul className="grid grid-cols-4">
-        {items.map(({ href, label, Icon }) => {
-          const active = href === base ? pathname === base : pathname.startsWith(href);
-          return (
-            <li key={href}>
-              <Link
-                href={href}
-                aria-current={active ? "page" : undefined}
-                className={cx("flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium", active ? "text-brand" : "text-ink-3")}
-              >
-                <Icon className="size-[22px]" strokeWidth={active ? 2.3 : 1.8} aria-hidden />
-                {label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
   );
 }
 
@@ -174,6 +109,7 @@ function PatientRecordTabsInner() {
     { href: base, label: "Overview" },
     { href: `${base}/sessions`, label: "Sessions" },
     { href: `${base}/compare`, label: "Compare" },
+    { href: `${base}/suggestions`, label: "Drafts" },
     { href: `${base}/sharing`, label: "Sharing & privacy" },
   ];
   const pathname = usePathname();

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { BASE_PATH, DEMO } from "./demo";
 import type { DemoManifest } from "./demo/manifest";
-import { generateSignal } from "./signal";
+import { generateMotion, generateSignal } from "./signal";
+import { detectEmgReps } from "./rep-verify";
 import type { ChannelKey } from "./types";
 
 export interface ClientSignal {
@@ -46,6 +47,7 @@ async function demoSignal(id: string, access: string): Promise<ClientSignal> {
   const token = new URLSearchParams(access).get("token");
   const includeRaw = token ? !!m.shareRaw[token] : true; // share links may withhold raw channels
   const g = generateSignal(rec.synth, rec.fs);
+  const mo = generateMotion(rec.synth, rec.fs);
   return {
     id,
     fs: g.fs,
@@ -54,7 +56,7 @@ async function demoSignal(id: string, access: string): Promise<ClientSignal> {
     rectified: includeRaw ? g.rectified : null,
     raw: includeRaw ? g.raw : null,
     channels: rec.channels,
-    motion: null,
+    motion: mo,
   };
 }
 
@@ -103,23 +105,9 @@ export function useSignal(id: string, access: string) {
   return state.id === id ? state : {};
 }
 
-/** Contraction windows from the envelope (same hysteresis as the server). */
+/** Contraction windows from the envelope (same detector as the server). */
 export function detectReps(env: Float32Array, fs: number) {
-  let peak = 0;
-  for (let i = 0; i < env.length; i++) if (env[i] > peak) peak = env[i];
-  const on = peak * 0.35;
-  const off = peak * 0.2;
-  const reps: { start: number; end: number }[] = [];
-  let s = -1;
-  for (let i = 0; i < env.length; i++) {
-    if (s < 0 && env[i] > on) s = i;
-    else if (s >= 0 && env[i] < off) {
-      if ((i - s) / fs > 0.3) reps.push({ start: s / fs, end: i / fs });
-      s = -1;
-    }
-  }
-  if (s >= 0) reps.push({ start: s / fs, end: env.length / fs });
-  return reps;
+  return detectEmgReps(env, fs).map((r) => ({ start: r.startI / fs, end: r.endI / fs }));
 }
 
 /** Block-mean resample (for smooth channels in overlays). */

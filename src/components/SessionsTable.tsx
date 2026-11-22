@@ -1,3 +1,11 @@
+// =============================================================================
+// SessionsTable.tsx : TABLE OF SESSIONS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   A table of a patient's sessions (date and time, where, the exercises, sets and pain score). Each row opens the session.
+// =============================================================================
+
 import Link from "next/link";
 import { ChevronRight, Home, MapPin, NotebookPen } from "lucide-react";
 import { fmtDate, fmtTime } from "@/lib/format";
@@ -16,9 +24,9 @@ export function SessionsTable({
   sessions: Session[];
   recordings: Recording[];
   baseHref: string;
-  audience: "clinician" | "patient";
+  audience: "clinician";
 }) {
-  const simple = audience === "patient";
+  const simple = false;
   const ordered = [...sessions].reverse();
   const bestFor = (sid: string, ex: string) => {
     const r = recordings.filter((x) => x.sessionId === sid && x.exercise === ex);
@@ -37,7 +45,7 @@ export function SessionsTable({
             <th className="px-3 py-3 font-medium">Where</th>
             {patient.exercises.map((ex) => (
               <th key={ex} className="px-3 py-3 font-medium">
-                {EXERCISES[ex].name} <span className="font-normal text-ink-3">{audience === "patient" ? "strongest effort" : "peak"}</span>
+                {EXERCISES[ex].name} <span className="font-normal text-ink-3">peak</span>
               </th>
             ))}
             {!simple && <th className="px-3 py-3 font-medium">Sets</th>}
@@ -69,9 +77,13 @@ export function SessionsTable({
                     {v == null ? (
                       <span className="text-ink-3">–</span>
                     ) : (
-                      <span className="flex items-center gap-2">
-                        <span className="w-14 tabular">{v.toFixed(2)} mV</span>
-                        <span className="h-1.5 w-20 overflow-hidden rounded-full bg-[#e9eef5]">
+                      <span className="flex items-center gap-2" title={simple ? `${v.toFixed(2)} mV` : undefined}>
+                        {!simple && <span className="w-14 tabular">{v.toFixed(2)} mV</span>}
+                        <span
+                          className={cx("h-1.5 overflow-hidden rounded-full", simple ? "w-24 bg-brand-soft" : "w-20 bg-[#e9eef5]")}
+                          role={simple ? "img" : undefined}
+                          aria-label={simple ? `${EXERCISES[ex].name} strongest effort ${v.toFixed(2)} mV` : undefined}
+                        >
                           <span className="block h-full rounded-full bg-brand/70" style={{ width: `${(v / maxBy[ex]) * 100}%` }} />
                         </span>
                       </span>

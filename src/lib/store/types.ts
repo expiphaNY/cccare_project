@@ -1,3 +1,11 @@
+// =============================================================================
+// types.ts : THE STORAGE CONTRACT
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The list of operations any store must offer (get, add, delete, list ...). The app only talks to this contract, so the local file, MongoDB and the demo store can be swapped without touching a page.
+// =============================================================================
+
 import type {
   AuditEvent,
   DeletionReceipt,
@@ -6,6 +14,8 @@ import type {
   Session,
   Share,
   SignalData,
+  Suggestion,
+  WeightSettings,
 } from "../types";
 
 /**
@@ -42,4 +52,14 @@ export interface Store {
   addAudit(e: AuditEvent): Promise<void>;
 
   listDeletionReceipts(): Promise<DeletionReceipt[]>;
+
+  /** Assistant-drafted suggestions. Omit patientId to list across all patients. */
+  listSuggestions(patientId?: string): Promise<Suggestion[]>;
+  getSuggestion(id: string): Promise<Suggestion | null>;
+  createSuggestion(s: Suggestion): Promise<void>;
+  updateSuggestion(id: string, patch: Partial<Suggestion>): Promise<void>;
+
+  /** Clinic-wide weight options offered by the recorder. */
+  getWeightSettings(): Promise<WeightSettings>;
+  saveWeightSettings(w: WeightSettings): Promise<void>;
 }

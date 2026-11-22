@@ -1,7 +1,16 @@
+// =============================================================================
+// transparency.tsx : SHOWING THE PATIENT WHAT HAPPENS TO THEIR DATA
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Read-only explainers: the access log, the table of share links, the data journey from skin to screen, an explanation of the signals, and who can see what.
+// =============================================================================
+
 import {
   Cpu,
   Database,
   Download,
+  Dumbbell,
   Eye,
   FilePlus2,
   KeyRound,
@@ -21,7 +30,7 @@ import type { AuditAction, AuditEvent, Share } from "@/lib/types";
 import { fmtDate, fmtDateTime, fmtTime, relTime } from "@/lib/format";
 import { shareState } from "@/lib/data";
 import { generateSignal } from "@/lib/signal";
-import { Badge, cx } from "./ui";
+import { Badge, Disclosure, cx } from "./ui";
 import { RevokeButton } from "./privacy";
 
 const ACTION_META: Record<AuditAction, { label: string; Icon: typeof Eye }> = {
@@ -40,30 +49,65 @@ const ACTION_META: Record<AuditAction, { label: string; Icon: typeof Eye }> = {
   consent_updated: { label: "Changed consent", Icon: Settings2 },
   data_recorded: { label: "New data recorded", Icon: Upload },
   note_added: { label: "Added clinical note", Icon: NotebookPen },
+  note_edited: { label: "Edited clinical note", Icon: NotebookPen },
+  note_deleted: { label: "Deleted clinical note", Icon: Trash2 },
   profile_deleted: { label: "Profile deleted", Icon: Trash2 },
+  suggestion_drafted: { label: "Assistant wrote a draft", Icon: NotebookPen },
+  suggestion_approved: { label: "Approved a draft", Icon: NotebookPen },
+  suggestion_rejected: { label: "Declined a draft", Icon: NotebookPen },
+  load_prescribed: { label: "Changed working weight", Icon: Dumbbell },
+  settings_updated: { label: "Changed clinic settings", Icon: Settings2 },
 };
 
 const ROLE_META = {
   clinician: { label: "Clinician", Icon: Stethoscope, tone: "brand" },
-  patient: { label: "You", Icon: User, tone: "neutral" },
+  patient: { label: "Patient", Icon: User, tone: "neutral" },
   recipient: { label: "Share recipient", Icon: Link2, tone: "warn" },
   device: { label: "Sensor", Icon: Radio, tone: "neutral" },
   system: { label: "System", Icon: Cpu, tone: "neutral" },
 } as const;
 
+/**
+ * `initialCount` (optional): show only the newest N entries, with the rest behind a "Show all" disclosure.
+ * Undefined shows everything, exactly as before.
+ */
 export function AccessLog({
+  events,
+  audience,
+  limit,
+  initialCount,
+}: {
+  events: AuditEvent[];
+  audience: "clinician";
+  limit?: number;
+  initialCount?: number;
+}) {
+  if (!initialCount || events.length <= initialCount) return <AccessLogList events={events} audience={audience} limit={limit} />;
+  return (
+    <div>
+      <AccessLogList events={events.slice(0, initialCount)} audience={audience} limit={limit} />
+      <Disclosure summary={`Show all (${events.length})`} className="mt-3">
+        <div className="max-h-[560px] overflow-y-auto">
+          <AccessLogList events={events.slice(initialCount)} audience={audience} limit={limit} />
+        </div>
+      </Disclosure>
+    </div>
+  );
+}
+
+function AccessLogList({
   events,
   audience,
   limit,
 }: {
   events: AuditEvent[];
-  audience: "clinician" | "patient";
+  audience: "clinician";
   limit?: number;
 }) {
   const shown = limit ? events.slice(0, limit) : events;
   const groups = new Map<string, AuditEvent[]>();
   // Patients get runs of identical events (same person, same action) merged into one row with a count.
-  const merge = audience === "patient";
+  const merge = false;
   const counts = new Map<string, { n: number; first: string }>();
   for (const e of shown) {
     const k = fmtDate(e.at);
@@ -85,13 +129,17 @@ export function AccessLog({
             {list.map((e) => {
               const a = ACTION_META[e.action];
               const role = ROLE_META[e.actor.role];
-              const who = e.actor.role === "patient" ? (audience === "patient" ? "You" : e.actor.name) : e.actor.name;
+              const who = e.actor.name;
               return (
                 <li key={e.id} className="relative py-2">
                   <span
                     className={cx(
                       "absolute -left-[31px] top-2.5 flex size-5 items-center justify-center rounded-full ring-4 ring-white",
-                      e.actor.role === "recipient" ? "bg-warn-soft text-warn" : e.actor.role === "clinician" ? "bg-brand-soft text-brand" : "bg-canvas text-ink-2",
+                      e.actor.role === "recipient"
+                          ? "bg-warn-soft text-warn"
+                          : e.actor.role === "clinician"
+                            ? "bg-brand-soft text-brand"
+                            : "bg-canvas text-ink-2",
                     )}
                   >
                     <a.Icon className="size-3" aria-hidden />
@@ -123,7 +171,7 @@ export function AccessLog({
   );
 }
 
-export function SharesTable({ shares, as, patientId }: { shares: Share[]; as: "clinician" | "patient"; patientId: string }) {
+export function SharesTable({ shares, as, patientId }: { shares: Share[]; as: "clinician"; patientId: string }) {
   if (!shares.length)
     return <p className="rounded-xl bg-canvas px-4 py-6 text-center text-sm text-ink-2">No share links yet. Nothing has been shared outside the care team.</p>;
   return (
@@ -147,7 +195,7 @@ export function SharesTable({ shares, as, patientId }: { shares: Share[]; as: "c
               </div>
               <p className="text-[13px] text-ink-2">
                 {s.purpose} · {s.scope === "full" ? "Entire profile" : `${s.sessionIds?.length} session(s)`}
-                {s.includeRaw ? " · incl. raw signals" : ""} · by {s.createdBy.role === "patient" && as === "patient" ? "you" : s.createdBy.name}
+                {s.includeRaw ? " · incl. raw signals" : ""} · by {s.createdBy.name}
               </p>
               <p className="text-[12px] text-ink-3">
                 {st === "active" ? `Expires ${relTime(s.expiresAt)}` : st === "expired" ? `Expired ${fmtDate(s.expiresAt)}` : `Revoked ${fmtDate(s.revokedAt!)}`} · Opened{" "}
@@ -234,7 +282,8 @@ export function SignalExplainer({ plain = true }: { plain?: boolean }) {
   );
 }
 
-export function WhoCanSee({ people }: { people: { who: string; why: string; kind: "care" | "share" | "you" }[] }) {
+/** `calm` (optional, patient privacy page): single blue/ink icon palette instead of a colour per kind. */
+export function WhoCanSee({ people, calm }: { people: { who: string; why: string; kind: "care" | "share" | "you" }[]; calm?: boolean }) {
   return (
     <ul className="space-y-2">
       {people.map((p) => (
@@ -242,7 +291,15 @@ export function WhoCanSee({ people }: { people: { who: string; why: string; kind
           <span
             className={cx(
               "flex size-8 shrink-0 items-center justify-center rounded-full",
-              p.kind === "share" ? "bg-warn-soft text-warn" : p.kind === "care" ? "bg-brand-soft text-brand" : "bg-canvas text-ink-2",
+              calm
+                ? p.kind === "you"
+                  ? "bg-canvas text-ink-2"
+                  : "bg-brand-soft text-brand"
+                : p.kind === "share"
+                  ? "bg-warn-soft text-warn"
+                  : p.kind === "care"
+                    ? "bg-brand-soft text-brand"
+                    : "bg-canvas text-ink-2",
             )}
           >
             {p.kind === "share" ? <Link2 className="size-4" aria-hidden /> : p.kind === "care" ? <Stethoscope className="size-4" aria-hidden /> : <KeyRound className="size-4" aria-hidden />}

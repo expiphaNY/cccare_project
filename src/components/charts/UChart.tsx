@@ -1,3 +1,11 @@
+// =============================================================================
+// UChart.tsx : SHARED CHART WRAPPER
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Wraps the uPlot charting library for React: creates the chart, resizes it with its container, shows a crosshair tooltip, and holds the colours and axis style every chart uses.
+// =============================================================================
+
 "use client";
 
 import { useEffect, useRef } from "react";

@@ -1,3 +1,13 @@
+// =============================================================================
+// layout.tsx : FRAME AROUND ONE PATIENT'S RECORD
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The patient's name and details at the top, the tabs (Overview, Sessions, Compare, Drafts,
+//   Sharing and privacy) and the buttons for a new measurement, compare, export and share.
+//   Every tab page under /doctor/patients/<id>/ is shown inside this frame.
+// =============================================================================
+
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";

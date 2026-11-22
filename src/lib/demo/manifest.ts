@@ -1,3 +1,11 @@
+// =============================================================================
+// manifest.ts : STATIC DEMO ONLY: WHAT THE BROWSER NEEDS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The shape of the small JSON file that lets the browser rebuild each demo recording (its settings and which channels it has), and which share links may see raw signals.
+// =============================================================================
+
 import type { ChannelKey, SynthParams } from "@/lib/types";
 
 /**

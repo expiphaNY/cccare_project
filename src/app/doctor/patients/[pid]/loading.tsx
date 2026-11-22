@@ -1,3 +1,11 @@
+// =============================================================================
+// loading.tsx : LOADING SCREEN
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Next.js shows this skeleton at once while one patient's record loads.
+// =============================================================================
+
 export default function Loading() {
   return (
     <div className="animate-pulse space-y-5" aria-busy="true" aria-label="Loading">

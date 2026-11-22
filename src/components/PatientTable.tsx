@@ -1,3 +1,11 @@
+// =============================================================================
+// PatientTable.tsx : THE SEARCHABLE PATIENT LIST
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The table on the clinician home page: search, a filter by status (improving, plateau, declining), a trend line per patient, and badges that always pair colour with a word.
+// =============================================================================
+
 "use client";
 
 import Link from "next/link";
@@ -104,7 +112,7 @@ export function PatientTable({ rows }: { rows: PatientRow[] }) {
           </thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.id} className="group relative border-b border-line last:border-b-0 hover:bg-brand-tint/60">
+              <tr key={r.id} data-agent-target={`patient-row-${r.id}`} data-agent-label={`Row for ${r.name}`} className="group relative border-b border-line last:border-b-0 hover:bg-brand-tint/60">
                 <td className="px-5 py-3 sm:px-6">
                   <Link href={`/doctor/patients/${r.id}`} className="flex items-center gap-3 after:absolute after:inset-0">
                     <Avatar text={r.initials} size="sm" />

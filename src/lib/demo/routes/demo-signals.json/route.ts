@@ -1,6 +1,13 @@
-// Copied to src/app/demo-signals.json/route.ts by scripts/build-pages.mjs, only
-// for the static demo build. It can't live in src/app permanently: route segment
-// config like `dynamic` is rejected when Cache Components is on (normal builds).
+// =============================================================================
+// route.ts : DEMO SIGNAL LIST (STATIC DEMO BUILD ONLY)
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Copied to src/app/demo-signals.json/route.ts by scripts/build-pages.mjs, only for the static demo build.
+//   It cannot live in src/app permanently: route segment settings such as `dynamic` are rejected when Cache
+//   Components is on (normal builds). It lists each demo recording's settings so the browser can regenerate it.
+// =============================================================================
+
 import { getStore } from "@/lib/store";
 import { measuredChannels } from "@/lib/types";
 import type { DemoManifest } from "@/lib/demo/manifest";

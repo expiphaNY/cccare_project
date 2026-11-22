@@ -1,6 +1,6 @@
 # MyoCare: EMG dashboard for patients and clinicians
 
-A dashboard for surface‑EMG rehab data. The microcontroller sends three signals for every exercise set: **raw EMG**, **rectified**, and **envelope**. MyoCare shows the data at several levels of detail. You can start from a simple progress view and go down step by step to the raw samples. Every view, share and export is logged, and the patient can see that log.
+A dashboard for surface‑EMG rehab data. The sensor board only measures (`firmware/MyoCareBLE`). For the muscle it streams every **raw EMG** reading at 500 Hz, untouched, and the website parses and cleans it itself (`src/lib/emg-filter.ts`) into raw, rectified and envelope channels, with no threshold or filter on the board. For the arm it sends the accelerometer's x/y/z exactly as the chip reports them, and the website cleans them and works out the arm angle (`src/lib/motion.ts`). The MyoWare's own hardware envelope is sent too, as a back-up for boards that stream no raw. MyoCare shows the data at several levels of detail. You can start from a simple progress view and go down step by step to the raw samples. Every view, share and export is logged, and the patient can see that log.
 
 > **Demo build.** All patients and recordings are synthetic. The generator is seeded, so the demo looks the same on every machine. Authentication is mocked (see *Before real patient data*).
 
@@ -53,16 +53,26 @@ Notes: dates like "expires in 23 days" and "3 days ago" are fixed at build time,
 
 | Page | Who | What |
 |---|---|---|
-| `/` | everyone | Choose the clinician or patient view |
+| `/` | everyone | Landing page → clinician dashboard (the app is clinician-only; there is no patient view) |
 | `/doctor` | clinician | Patient list with search, a status filter (improving / plateau / declining), sparklines, and patients who need attention |
-| `/doctor/patients/:id` | clinician | Patient record. Tabs: **Overview** (exercise cards, trend chart with 6 metrics, recent sessions, notes, access log) · **Sessions** · **Compare** · **Sharing & privacy** |
-| `/doctor/patients/:id/sessions/:sid?set=` | clinician | Session → set → three synced channel charts (zoom, jump to a rep) → raw sample table and CSV download |
-| `/patient/:id` | patient | Plain‑language progress, "start vs now", who can see your data, clinician notes |
-| `/patient/:id/compare` | patient | The same comparison tool, worded for patients |
-| `/patient/:id/record` · `/doctor/patients/:id/record` | both | Live measurement from a MyoWare sensor over Bluetooth (see below) |
-| `/patient/:id/privacy` | patient | **My data**: what's collected, how it travels, the full access log, share links, consent switches, downloads, and deleting the profile |
+| `/doctor/patients/:id` | clinician | Patient record. Tabs: **Overview** (exercise cards, load & rep-quality card with the prescribed working weight, trend chart with 6 metrics, recent sessions, notes, access log) · **Sessions** · **Compare** · **Drafts** · **Sharing & privacy** |
+| `/doctor/patients/:id/sessions/:sid?set=` | clinician | Session → set → three synced channel charts (zoom, jump to a rep) → accelerometer (smoothed / raw) → **rep cross-check** (EMG vs movement, per-rep table) → raw sample table and CSV download |
+| `/doctor/patients/:id/record` | clinician | Live measurement from a MyoWare sensor over Bluetooth, with a weight picker per set and live EMG + movement rep counters (see below) |
+| `/doctor/suggestions` | clinician | **Drafts**: session notes and working-weight changes written by MyoMinion, applied only on approval |
+| `/doctor/settings` | clinician | **Weights**: the clinic's list of weights (kg or lb) offered by the recorder, stored in MongoDB `settings` |
 | `/share/:token` | recipient | Read‑only interactive record for an outside clinic. The link expires, can be revoked, and every opening is logged |
 | `/data-handling` | everyone | Data‑handling policy and the sharing standards used |
+
+### MyoMinion
+
+The **MyoMinion** button (all doctor pages) runs an agent loop against a local LM Studio server (`LMSTUDIO_URL`, default `localhost:1234`). It only does work that takes a clinician more than a couple of clicks; every number comes from deterministic tools in `src/lib/agent/tools.ts` (7 tools):
+
+- **Session wrap-up** (the **Wrap up with MyoMinion** button on a session page): the server prefetches `review_session`, the model gets only 3 tools and a fixed SOAP procedure, drafts the note with `draft_session_note`, and calls `propose_load_change` only when the progression rules say increase or decrease.
+- **review_patient**: a brief condensed from every session (trend, weights with the next-weight recommendation, rep quality, shakiness by weight, pain, notes).
+- **triage_caseload**: every patient sorted into action lists (ready to move up, should drop back, declining, reps not verified, shakier with weight, inactive).
+- `get_current_view` and `highlight` for "this session" and pointing at a rep.
+
+Drafts change nothing until approved in Drafts. `draft_session_note` rejects a note containing any number that is not in the session review, naming the numbers, so the model rewrites it. Six eval tasks (Debug toggle) grade runs automatically; task 6 is the wrap-up.
 
 ### From overview to raw data
 
@@ -108,7 +118,7 @@ Content-Type: application/json
 
 `/patient/:id/record` and `/doctor/patients/:id/record` ("Start new measurement" / "New measurement") stream a **MyoWare 2.0 Wireless Shield** straight into the browser. No Arduino IDE or Node bridge is needed. It works in **Chrome or Edge** on a computer, over `https://` or `http://localhost`. It doesn't work in Safari, Firefox, or browsers built into other apps; the page detects these and offers to copy the link.
 
-**Firmware:** upload [`../firmware/MyoCareBLE/MyoCareBLE.ino`](../firmware/MyoCareBLE/MyoCareBLE.ino) to the shield with the Arduino IDE. Use board *SparkFun ESP32 Thing Plus* (esp32 core 3.3.x); no extra libraries are needed. It advertises as `MyoWareSensor1` and sends `Muscle:<ENV ADC>` 50 times a second over Bluetooth LE, with the same UUIDs as the MyoWare library. If an external I²C / STEMMA QT accelerometer is connected (tried on SDA 21 / SCL 22 first, then any pins with pull-ups), the sketch detects it at start-up and adds `Accel_X/Y/Z` in g to each line. Supported chips: MPU‑6050/6500/9250, ICM‑20948, ADXL345/343, LIS3DH/LIS2DH12, LSM6DS3/DSL/DSO, ISM330DHCX, and MMA845x. It restarts advertising after a disconnect, and its LED blinks while waiting and stays solid once connected. This matches the default **Bluetooth LE** connection, so Chrome or Edge connect directly, with no pairing and no server bridge, on localhost or any HTTPS deployment.
+**Firmware:** upload [`../firmware/MyoCareBLE/MyoCareBLE.ino`](../firmware/MyoCareBLE/MyoCareBLE.ino) to the shield with the Arduino IDE. Use board *SparkFun ESP32 Thing Plus* (esp32 core 3.3.x); no extra libraries are needed. It advertises as `MyoWareSensor1` and sends `Muscle:<ENV ADC>` plus a batch of raw EMG readings (`Fs:500,Raw:…`, about 10 per line) 50 times a second over Bluetooth LE, with the same UUIDs as the MyoWare library. If an external I²C / STEMMA QT accelerometer is connected (tried on SDA 21 / SCL 22 first, then any pins with pull-ups), the sketch detects it at start-up and adds `Accel_X/Y/Z` in g to each line, exactly as the chip reports them. The muscle part of every line is packed first, so the accelerometer can never push raw EMG readings out of a small Bluetooth packet (`sh firmware/bench/run.sh` tests this on a laptop). Supported chips: MPU‑6050/6500/9250, ICM‑20948, ADXL345/343, LIS3DH/LIS2DH12, LSM6DS3/DSL/DSO, ISM330DHCX, and MMA845x. It restarts advertising after a disconnect, and its LED blinks while waiting and stays solid once connected. This matches the default **Bluetooth LE** connection, so Chrome or Edge connect directly, with no pairing and no server bridge, on localhost or any HTTPS deployment.
 
 There are three ways to connect (**Advanced sensor settings → Connection**):
 
@@ -125,15 +135,18 @@ The bridge (`src/lib/server/serial-bridge.ts`) opens the port once and sets it t
 Steps:
 
 1. Click **Connect sensor**. The page shows each step and explains any failure.
-2. Pick the exercise, location and pain score, then click **Start set**. You see the live value, a 10 s chart, set time, a live rep count and the set peak.
+2. Pick the exercise, location, pain score and the **weight** for the set (chips from the clinic list, or a custom value; it starts at the patient's prescribed weight), then click **Start set**. You see the live value, a 10 s chart, set time, live **EMG reps** and **movement reps** (green when they match), the arm angle and the set peak.
 3. **Stop set** keeps the set. Add more sets or remove some, then click **Finish & save session**. Nothing is stored before that. Saving creates one session with one recording per set and writes to the access log.
 4. **Try with a demo sensor** simulates the board, so you can test without hardware.
 
-The line parser accepts labelled lines (`Muscle:` / `emg=` / `Accel_X:` …) or plain numbers (`1834` or `emg,ax,ay,az`). Values are treated as 12‑bit ADC counts and converted to **millivolts at the electrodes**, using the same formula as the MyoWare library: `counts × 3.3 V / 4095 ÷ gain`, where envelope gain = 200 × (1 + gain knob kΩ). The default knob setting is 50 kΩ, which gives a gain of 10 200. The browser then resamples to 100 Hz and posts to `POST /api/record`. If the reading sits near 4095, the page warns that the electrode contact or gain is likely the problem.
+The line parser (`parsePacket` in `src/lib/ble.ts`) accepts labelled lines (`Muscle:` / `emg=` / `Accel_X:` …) or plain numbers (`1834` or `emg,ax,ay,az`), plus an optional batch of raw readings (`Fs:500,Raw:12 -3 5 …`). A line it cannot read is skipped, so one bad packet cannot crash the stream. Values are treated as 12‑bit ADC counts and converted to **millivolts at the electrodes**, using the same formula as the MyoWare library: `counts × 3.3 V / 4095 ÷ gain`, where envelope gain = 200 × (1 + gain knob kΩ). The default knob setting is 50 kΩ, which gives a gain of 10 200. The browser then resamples to 100 Hz and posts to `POST /api/record`. If the reading sits near 4095, the page warns that the electrode contact or gain is likely the problem.
 
-- **Envelope‑only:** recordings are stored with `channels: ["envelope"]`. RMS and median frequency are hidden, left out of trends, and left out of FHIR exports, because they need raw EMG at ≥200 Hz.
-- **Accelerometer:** saved as `signals.motion{x,y,z}`, plotted under the EMG and included in CSV exports, but only when it sends non‑zero values. The current shield firmware sends `0.00`.
-- Recordings made this way get `source: "ble"`, plus `capture{transport: web-serial|web-bluetooth|demo, deviceName, observedRateHz, samplesReceived, scale, gain}`.
+- **Envelope‑only:** when the firmware does not stream raw, recordings are stored with `channels: ["envelope"]`. RMS and median frequency are hidden, left out of trends, and left out of FHIR exports, because they need raw EMG at ≥200 Hz.
+- **Accelerometer:** raw x/y/z saved as `signals.motion{x,y,z}` exactly as the chip sent them (only when it sends non‑zero values) and included in CSV exports. The site cleans them itself in `src/lib/motion.ts`: block‑median decimation to ~50 Hz and a median‑of‑5 remove Bluetooth glitches, then a zero‑phase 3 Hz Butterworth low‑pass (forwards + backwards, so movement timing stays aligned with the EMG). The arm angle is measured from the rest orientation (the end of the movement range where EMG is quiet) and reps are counted above 50 % of the set's range (≥ 8°, ≥ 0.5 s). A set with no accelerometer is counted from the muscle alone and marked **EMG only**.
+- **Rep cross-check:** `src/lib/rep-verify.ts` counts reps from the EMG envelope (robust-threshold hysteresis) and from the arm angle, matches them by time overlap, and stores `recordings.repCheck` (`verified` / `partial` / `mismatch` / `no-motion`, EMG reps, movement reps, verified reps, agreement, mean ROM, EMG-to-movement onset offset, per-rep list, filter settings). EMG-only reps usually mean a partial or isometric rep; movement-only reps suggest momentum or poor electrode contact.
+- **Weights:** each recording stores `load {value, unit, kg}`; patients store `prescribedLoad`.
+- **Shakiness (tremor):** `src/lib/tremor.ts` measures 3–12 Hz shake (voluntary curls sit below ~2 Hz). Glitches are removed with a Hampel filter (the rep path's medians would erase tremor, which is why the raw x/y/z are kept), then a zero-phase band-pass. The headline number is the RMS while the arm holds still at the top of the curl (postural tremor, milli-g): steady < 5, mild < 15, moderate < 50, marked ≥ 50 (heuristic). Also stored in `recordings.tremor`: rest and moving RMS, the **off-axis** RMS along the elbow's rotation axis (found by PCA; the curl barely moves it, so it's a clean check that the shake is real), dominant frequency and rhythmicity (8–12 Hz = physiological, 4–7 Hz = slower, typical of neurological tremor), hold shake per rep, change across the set (fatigue), and whether the sensor's packet rate (needs ≥ 24 Hz) can resolve 12 Hz. Shown on the session page, live in the recorder, on the patient overview (per session and by weight), used by MyoMinion's `analyze_shakiness`, and as a rule in the weight recommendation.
+- Recordings made this way get `source: "ble"`, plus `capture{transport: web-serial|web-bluetooth|demo, deviceName, observedRateHz, samplesReceived, gain}`.
 
 ## Sharing and the standards behind it
 

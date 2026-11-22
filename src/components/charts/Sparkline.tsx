@@ -1,3 +1,12 @@
+// =============================================================================
+// Sparkline.tsx : TINY INLINE TREND LINES AND REP BARS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Small server-renderable SVG pictures: a trend line (Sparkline) and per-rep bars (RepBars). They are
+//   decorative; the value is always stated in words next to them.
+// =============================================================================
+
 /** Tiny inline trend. Server-renderable SVG; decorative (value is stated next to it). */
 export function Sparkline({
   values,
@@ -35,17 +44,17 @@ export function Sparkline({
 }
 
 /** Per-rep peaks as thin bars — shows fatigue within a set at a glance. */
-export function RepBars({ values, height = 44 }: { values: number[]; height?: number }) {
+export function RepBars({ values, height = 44, unit = "mV", digits = 3 }: { values: number[]; height?: number; unit?: string; digits?: number }) {
   if (!values.length) return null;
   const max = Math.max(...values);
   return (
-    <div className="flex items-end gap-1" style={{ height }} aria-label={`Rep peaks: ${values.map((v) => v.toFixed(2)).join(", ")} mV`} role="img">
+    <div className="flex items-end gap-1" style={{ height }} aria-label={`Per rep: ${values.map((v) => v.toFixed(Math.min(2, digits))).join(", ")} ${unit}`} role="img">
       {values.map((v, i) => (
         <div key={i} className="flex flex-1 flex-col items-center gap-1">
           <div
             className="w-full max-w-4 rounded-t-[4px] bg-brand/80"
             style={{ height: Math.max(3, (v / max) * (height - 14)) }}
-            title={`Rep ${i + 1}: ${v.toFixed(3)} mV`}
+            title={`Rep ${i + 1}: ${v.toFixed(digits)} ${unit}`}
           />
           <span className="text-[10px] leading-none text-ink-3 tabular">{i + 1}</span>
         </div>

@@ -1,6 +1,11 @@
-// Self-contained interactive HTML report. One file, no network needed:
-// uPlot is inlined, data is embedded as JSON. Recipients can open it offline,
-// hover charts, layer sessions, and print to PDF.
+// =============================================================================
+// html.ts : EXPORT AS A SELF-CONTAINED HTML REPORT
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   One file, no network needed: the chart library is inlined and the data is embedded as JSON.
+//   Recipients can open it offline, hover the charts, layer sessions, and print to PDF.
+// =============================================================================
 
 import fs from "node:fs";
 import path from "node:path";

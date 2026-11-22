@@ -1,3 +1,11 @@
+// =============================================================================
+// zoom.tsx : ZOOM AND PAN FOR CHARTS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Helpers and controls that keep a chart's visible window inside the data, zoom around a point, and pan, shared by every zoomable chart.
+// =============================================================================
+
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";

@@ -1,3 +1,11 @@
+// =============================================================================
+// CompareFromQuery.tsx : STATIC DEMO ONLY: READING THE COMPARE CHOICES
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   The static demo cannot read the web address on a server, so this reads ?ex= and ?ids= in the browser and passes them to the compare tool.
+// =============================================================================
+
 "use client";
 
 import { Suspense, type ComponentProps } from "react";

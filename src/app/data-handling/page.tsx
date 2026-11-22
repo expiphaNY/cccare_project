@@ -1,3 +1,13 @@
+// =============================================================================
+// page.tsx : THE DATA-HANDLING PAGE (/data-handling)
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   A plain-language page, open to everyone, that explains where the data lives, who can see it,
+//   how long it is kept and which sharing standards are used. It is built from the shared
+//   transparency components so the wording matches what the app really does.
+// =============================================================================
+
 import Link from "next/link";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { Logo } from "@/components/nav";
@@ -55,21 +65,21 @@ export default function DataHandling() {
           <p className="eyebrow !text-brand">Transparency</p>
           <h1 className="display mt-2 text-[40px] font-semibold">How MyoCare handles your data</h1>
           <p className="mt-3 text-[17px] leading-relaxed text-ink-2">
-            Written for patients first. If something here is unclear, that’s our problem to fix — ask your clinician.
+            A plain-language summary to share with patients. It is written to them, so it says “you”.
           </p>
         </div>
 
         <section>
           <h2 className="title text-xl font-semibold">What is collected</h2>
           <p className="mt-1 text-sm text-ink-2">
-            A small sensor measures the electrical activity of one muscle. For every set we store three versions of that signal, plus the exercise, set number,
-            date and time. We also store your name, date of birth, condition and the notes your clinician writes.
+            A small sensor measures the electrical activity of one muscle, and an accelerometer measures how your arm moves. For every set we store three
+            versions of the muscle signal, the arm movement, the weight you lifted, the exercise, set number, date and time. We also store your name, date of birth, condition and the notes your clinician writes.
           </p>
           <div className="mt-4">
             <SignalExplainer />
           </div>
           <p className="mt-3 text-sm text-ink-2">
-            <b className="text-ink">Not collected:</b> location, audio, video, contacts, or anything from your phone.
+            <b className="text-ink">Not collected:</b> location, audio, video, contacts, or anything from your phone. The accelerometer only records arm movement during a set.
           </p>
         </section>
 

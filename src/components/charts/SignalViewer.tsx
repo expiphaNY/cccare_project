@@ -1,14 +1,25 @@
+// =============================================================================
+// SignalViewer.tsx : THE SET'S SIGNAL CHARTS
+// =============================================================================
+//
+// WHAT THIS FILE DOES (high-level overview)
+//   Draws the channels of one set (envelope, and for demo data raw and rectified) on synced, zoomable charts, with a jump-to-rep list, and shows the arm-movement panel beneath.
+// =============================================================================
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type uPlot from "uplot";
 import { Info, Lock, ZoomIn } from "lucide-react";
-import { CHANNELS, type ChannelKey } from "@/lib/types";
+import { CHANNELS, type ChannelKey, type TremorMetrics } from "@/lib/types";
 import { detectReps, useSignal, type ClientSignal } from "@/lib/client-signal";
 import { Segmented } from "../Segmented";
 import { cx } from "../ui";
 import { AXIS, UChart, fmtNum } from "./UChart";
 import { ZoomBar, fmtSpan, useChartZoom } from "./zoom";
+import { MotionPanel } from "./RepCheckPanel";
+import type { ClientAction } from "@/lib/agent/protocol";
+import { HIGHLIGHT_EVENT } from "@/lib/agent/target";
 
 type View = ChannelKey | "all";
 
@@ -19,15 +30,20 @@ export function SignalViewer({
   access,
   audience,
   title,
+  tremor,
 }: {
   recordingId: string;
   access: string;
-  audience: "clinician" | "patient" | "recipient";
+  audience: "clinician" | "recipient";
   title?: string;
+  /** Shakiness stored when the set was saved (uses the sensor's real packet rate). */
+  tremor?: TremorMetrics;
 }) {
   const { data, error } = useSignal(recordingId, access);
   const [view, setView] = useState<View>(audience === "clinician" ? "all" : "envelope");
   const [range, setRange] = useState<[number, number] | null>(null);
+  // Span the assistant is pointing at (drawn as a stronger band), cleared after a few seconds.
+  const focus = useRef<[number, number] | null>(null);
 
   const hasRaw = !!data?.raw;
   // Envelope-only sensors (e.g. MyoWare over Bluetooth) never measured raw/rectified.
@@ -36,9 +52,9 @@ export function SignalViewer({
   const reps = useMemo(() => (data ? detectReps(data.envelope, data.fs) : []), [data]);
   const views: { value: View; label: string }[] = (
     [
-      { value: "envelope", label: audience === "patient" ? "Effort (envelope)" : "Envelope" },
+      { value: "envelope", label: "Envelope" },
       { value: "rectified", label: "Rectified" },
-      { value: "raw", label: audience === "patient" ? "Raw signal" : "Raw EMG" },
+      { value: "raw", label: "Raw EMG" },
       { value: "all", label: "All three" },
     ] as { value: View; label: string }[]
   ).filter((v) => (v.value === "all" ? !envelopeOnly : measured.includes(v.value)));
@@ -51,6 +67,31 @@ export function SignalViewer({
   const domain = useMemo<[number, number]>(() => [0, duration], [duration]);
   // Closest zoom: ~50 samples on screen, never under 0.1 s.
   const minSpan = data ? Math.max(0.1, 50 / data.fs) : 1;
+  useEffect(() => {
+    let clear = 0;
+    const onHighlight = (e: Event) => {
+      const a = (e as CustomEvent<ClientAction>).detail;
+      if (a.target !== "signal-chart" || !data) return;
+      let span: [number, number] | null = null;
+      if (a.rep && reps[a.rep - 1]) span = [reps[a.rep - 1].start, reps[a.rep - 1].end];
+      else if (a.start != null && a.end != null && a.end > a.start) span = [Math.max(0, a.start), Math.min(data.n / data.fs, a.end)];
+      if (!span) return;
+      focus.current = span;
+      const pad = Math.max(0.4, (span[1] - span[0]) * 0.25);
+      setRange([Math.max(0, span[0] - pad), Math.min(data.n / data.fs, span[1] + pad)]);
+      window.clearTimeout(clear);
+      clear = window.setTimeout(() => {
+        focus.current = null;
+        setRange((r) => (r ? [r[0], r[1]] : r)); // new identity → charts redraw without the band
+      }, 7000);
+    };
+    window.addEventListener(HIGHLIGHT_EVENT, onHighlight);
+    return () => {
+      window.removeEventListener(HIGHLIGHT_EVENT, onHighlight);
+      window.clearTimeout(clear);
+    };
+  }, [data, reps]);
+
   const { wrapperProps: zoomProps, wheelTarget: zoomTarget } = useChartZoom({ domain, view: range, setView: setRange, minSpan, enabled: !!data });
 
   return (
@@ -105,9 +146,9 @@ export function SignalViewer({
           </div>
         )}
         {data && !locked && (
-          <StackedCharts data={data} channels={channelsShown} range={range} setRange={setRange} reps={reps} />
+          <StackedCharts data={data} channels={channelsShown} range={range} setRange={setRange} reps={reps} focus={focus} />
         )}
-        {data?.motion && <MotionChart data={data} motion={data.motion} plain={plain} range={range} />}
+        {data?.motion && <MotionPanel data={data} plain={plain} range={range} stored={tremor} />}
       </div>
       {data && (
         <ZoomBar domain={domain} view={range} setView={setRange} minSpan={minSpan} format={fmtSpan} className="px-5 pt-3 sm:px-6" />
@@ -134,12 +175,14 @@ function StackedCharts({
   range,
   setRange,
   reps,
+  focus,
 }: {
   data: ClientSignal;
   channels: ChannelKey[];
   range: [number, number] | null;
   setRange: (r: [number, number] | null) => void;
   reps: { start: number; end: number }[];
+  focus: React.RefObject<[number, number] | null>;
 }) {
   const plots = useRef(new Map<ChannelKey, uPlot>());
   const x = useMemo(() => {
@@ -180,6 +223,7 @@ function StackedCharts({
           syncKey={syncKey}
           showXAxis={idx === channels.length - 1}
           reps={reps}
+          focus={focus}
           onSelect={setRange}
           onCreate={(u) => {
             plots.current.set(ch, u);
@@ -200,6 +244,7 @@ function ChannelChart({
   syncKey,
   showXAxis,
   reps,
+  focus,
   onSelect,
   onCreate,
   label,
@@ -211,6 +256,7 @@ function ChannelChart({
   syncKey: string;
   showXAxis: boolean;
   reps: { start: number; end: number }[];
+  focus: React.RefObject<[number, number] | null>;
   onSelect: (r: [number, number]) => void;
   onCreate: (u: uPlot) => void;
   label?: string;
@@ -253,6 +299,18 @@ function ChannelChart({
               if (x1 < bbox.left || x0 > bbox.left + bbox.width) continue;
               ctx.fillRect(Math.max(bbox.left, x0), bbox.top, Math.min(bbox.left + bbox.width, x1) - Math.max(bbox.left, x0), bbox.height);
             }
+            const f = focus.current;
+            if (f) {
+              const x0 = Math.max(bbox.left, u.valToPos(f[0], "x", true));
+              const x1 = Math.min(bbox.left + bbox.width, u.valToPos(f[1], "x", true));
+              if (x1 > x0) {
+                ctx.fillStyle = "rgba(11,99,206,0.16)";
+                ctx.fillRect(x0, bbox.top, x1 - x0, bbox.height);
+                ctx.fillStyle = "rgba(11,99,206,0.9)";
+                ctx.fillRect(x0, bbox.top, 2, bbox.height);
+                ctx.fillRect(x1 - 2, bbox.top, 2, bbox.height);
+              }
+            }
             ctx.restore();
           },
         ],
@@ -288,77 +346,5 @@ function ChannelChart({
       onCreate={onCreate}
       ariaLabel={`${CHANNELS[ch].label} signal over time`}
     />
-  );
-}
-
-const MOTION_COLORS = ["#2a78d6", "#eb6834", "#1baf7a"];
-
-/** Accelerometer x/y/z (g) recorded alongside the EMG, on the same time axis. */
-function MotionChart({
-  data,
-  motion,
-  plain,
-  range,
-}: {
-  data: ClientSignal;
-  motion: NonNullable<ClientSignal["motion"]>;
-  plain: boolean;
-  range: [number, number] | null;
-}) {
-  const plot = useRef<uPlot | null>(null);
-  const rangeRef = useRef(range);
-  useEffect(() => {
-    rangeRef.current = range;
-    const u = plot.current;
-    if (u?.root.isConnected) u.setScale("x", range ? { min: range[0], max: range[1] } : { min: 0, max: motion.x.length / data.fs });
-  }, [range, motion, data.fs]);
-  const aligned = useMemo(() => {
-    const x = new Float64Array(motion.x.length);
-    for (let i = 0; i < x.length; i++) x[i] = i / data.fs;
-    return [x, motion.x, motion.y, motion.z] as unknown as uPlot.AlignedData;
-  }, [data.fs, motion]);
-  const options = useMemo<Omit<uPlot.Options, "width" | "height">>(
-    () => ({
-      padding: [8, 12, 0, 0],
-      cursor: { sync: { key: `sig-${data.id}`, setSeries: false }, points: { show: false }, y: false, drag: { x: false, y: false } },
-      scales: { x: { time: false } },
-      axes: [
-        { ...AXIS, values: (_u, v) => v.map((s) => `${s.toFixed(s < 10 ? 1 : 0)} s`) },
-        { ...AXIS, size: 56, values: (_u, v) => v.map((n) => n.toFixed(1)), label: "Motion (g)", labelSize: 16, labelFont: AXIS.font },
-      ],
-      series: [{}, ...["X", "Y", "Z"].map((l, i) => ({ label: l, stroke: MOTION_COLORS[i], width: 1.5, points: { show: false } }))],
-      legend: { show: false },
-    }),
-    [data.id],
-  );
-  const tooltip = useMemo(
-    () => (u: uPlot, idx: number) =>
-      `<div style="color:#5c6b82">${(u.data[0][idx] as number).toFixed(2)} s</div>` +
-      ["X", "Y", "Z"].map((l, i) => `<div><span style="color:${MOTION_COLORS[i]}">●</span> ${l} <b>${fmtNum(u.data[i + 1][idx] as number, 2)} g</b></div>`).join(""),
-    [],
-  );
-  return (
-    <div className="mt-3">
-      <div className="flex flex-wrap items-center gap-3 px-3 pb-1 text-[12px] text-ink-2">
-        <span className="font-medium text-ink">{plain ? "Arm movement" : "Accelerometer"}</span>
-        {["X", "Y", "Z"].map((l, i) => (
-          <span key={l} className="inline-flex items-center gap-1">
-            <span className="inline-block h-0.5 w-3 rounded" style={{ background: MOTION_COLORS[i] }} aria-hidden /> {l}
-          </span>
-        ))}
-      </div>
-      <UChart
-        options={options}
-        data={aligned}
-        height={150}
-        tooltip={tooltip}
-        ariaLabel="Accelerometer x, y and z over time"
-        onCreate={(u) => {
-          plot.current = u;
-          const r = rangeRef.current;
-          if (r) u.setScale("x", { min: r[0], max: r[1] });
-        }}
-      />
-    </div>
   );
 }
