@@ -76,9 +76,8 @@ function NavItem({ href, label, active }: { href: string; label: string; active?
 
 export function ClinicianHeader() {
   const items = [
-    { href: "/doctor", label: "Patients", except: ["/doctor/suggestions", "/doctor/settings"] },
+    { href: "/doctor", label: "Patients", except: ["/doctor/suggestions"] },
     { href: "/doctor/suggestions", label: "Drafts" },
-    { href: "/doctor/settings", label: "Weights" },
     { href: "/data-handling", label: "Data handling" },
   ];
   return (

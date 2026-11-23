@@ -19,7 +19,7 @@ import { Avatar, Badge, Breadcrumbs, PageContainer, btn } from "@/components/ui"
 import { clinicianById } from "@/lib/data";
 import { DEMO } from "@/lib/demo";
 import { patientParams } from "@/lib/demo/params";
-import { ageFrom, fmtDate, fmtTime, fullName, initials } from "@/lib/format";
+import { ageFrom, fmtDate, fullName, initials, sessionName } from "@/lib/format";
 import { getStore } from "@/lib/store";
 
 export const generateStaticParams = DEMO ? patientParams : undefined;
@@ -91,7 +91,7 @@ async function RecordHeader({ params }: { params: Promise<{ pid: string }> }) {
             patientName={fullName(p)}
             sessions={[...sessions].reverse().map((s, i) => ({
               id: s.id,
-              label: `${fmtDate(s.startedAt)} ${fmtTime(s.startedAt)} · ${s.location === "clinic" ? "Clinic" : "Home"} (session ${sessions.length - i})`,
+              label: `${sessionName(s)} · ${s.location === "clinic" ? "Clinic" : "Home"} (session ${sessions.length - i})`,
             }))}
           />
         </div>

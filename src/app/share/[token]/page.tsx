@@ -23,7 +23,7 @@ import { TrendPanel } from "@/components/charts/TrendPanel";
 import { Avatar, Badge, Card, CardHeader, PageContainer } from "@/components/ui";
 import { shouldLog } from "@/lib/access";
 import { clinicianById, logAccess, resolveShare, shareState } from "@/lib/data";
-import { ageFrom, fmtDate, fmtTime, fullName, initials, relTime } from "@/lib/format";
+import { ageFrom, fmtDate, fmtTime, fullName, initials, relTime, sessionName } from "@/lib/format";
 import { DEMO } from "@/lib/demo";
 import { shareParams } from "@/lib/demo/params";
 import { getStore } from "@/lib/store";
@@ -70,6 +70,11 @@ export default async function SharedRecord({ params }: PageProps<"/share/[token]
   const clin = clinicianById(p.clinicianId);
   const access = `token=${encodeURIComponent(token)}`;
   const def = defaultComparison(p, recordings);
+  // A recording is shown under its session's name, which already includes the start time.
+  const nameOf = (r: { sessionId: string; recordedAt: string }) => {
+    const sess = sessions.find((x) => x.id === r.sessionId);
+    return sess ? sessionName(sess) : `${fmtDate(r.recordedAt)} · ${fmtTime(r.recordedAt)}`;
+  };
   const lastSessionId = recordings[recordings.length - 1]?.sessionId;
   const inLast = recordings.filter((r) => r.sessionId === lastSessionId);
   const latest = inLast.length ? inLast.reduce((a, b) => (b.metrics.peakEnvelope > a.metrics.peakEnvelope ? b : a)) : null;
@@ -120,7 +125,7 @@ export default async function SharedRecord({ params }: PageProps<"/share/[token]
         <div>
           <h2 className="title mb-3 text-xl font-semibold">Compare over time</h2>
           <CompareTool
-            recordings={compareRecordings(recordings)}
+            recordings={compareRecordings(recordings, sessions)}
             exercises={exerciseList(p)}
             access={access}
             audience="recipient"
@@ -132,7 +137,7 @@ export default async function SharedRecord({ params }: PageProps<"/share/[token]
         {latest && (
           <Card>
             <CardHeader
-              eyebrow={`Latest session · ${fmtDate(latest.recordedAt)} ${fmtTime(latest.recordedAt)}`}
+              eyebrow={`Latest session · ${nameOf(latest)}`}
               title={`${EXERCISES[latest.exercise].name}, set ${latest.setNumber}`}
               subtitle="Strongest set of the most recent shared session."
             />
@@ -160,7 +165,7 @@ export default async function SharedRecord({ params }: PageProps<"/share/[token]
                 {[...recordings].reverse().map((r) => (
                   <tr key={r.id} className="border-t border-line">
                     <td className="px-5 py-2 tabular sm:px-6">
-                      {fmtDate(r.recordedAt)} <span className="text-ink-3">{fmtTime(r.recordedAt)}</span>
+                      {nameOf(r)}
                     </td>
                     <td className="px-3 py-2">{EXERCISES[r.exercise].name}</td>
                     <td className="px-3 py-2 text-right tabular">{r.setNumber}</td>

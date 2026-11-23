@@ -10,10 +10,18 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import type uPlot from "uplot";
-import { Check, ChevronDown, Layers, Sparkles, X } from "lucide-react";
-import { detectReps, fetchSignal, resample, type ClientSignal } from "@/lib/client-signal";
+import { Check, ChevronDown, Layers, Pencil, Sparkles, X } from "lucide-react";
+import { renameSessionAction } from "@/app/actions";
+import { DEMO, DEMO_MSG } from "@/lib/demo";
+import { SESSION_NAME_MAX, fmtDate } from "@/lib/format";
+import {
+  detectReps,
+  fetchSignal,
+  resample,
+  type ClientSignal,
+} from "@/lib/client-signal";
 import { Segmented } from "./Segmented";
 import { AXIS, SERIES_COLORS, UChart, fmtNum, swatch } from "./charts/UChart";
 import { Card, Disclosure, cx } from "./ui";
@@ -21,6 +29,11 @@ import { Card, Disclosure, cx } from "./ui";
 export interface CompareRecording {
   id: string;
   sessionId: string;
+  /** The session's full name, time included ("Nov 22, 2026 · 4:35 p.m." or "Elbow week 3 · 4:35 p.m."). */
+  sessionName: string;
+  /** The name without the time, and the start time on its own, for the picker rows. */
+  sessionTitle: string;
+  sessionTime: string;
   date: string;
   exercise: string;
   setNumber: number;
@@ -36,18 +49,18 @@ type Scale = "abs" | "rel";
 
 const MAX = 6;
 
-const dateLabel = (iso: string, withYear = false) =>
-  new Date(iso).toLocaleDateString("en-CA", { month: "short", day: "numeric", ...(withYear ? { year: "numeric" } : {}) });
-
 export function CompareTool({
-  recordings,
+  recordings: recordingsIn,
   exercises,
   access,
   audience,
   initialExercise,
   initialIds,
+  patientId,
 }: {
   recordings: CompareRecording[];
+  /** Given only on the clinician's own page: it turns on renaming sessions from the list. Never given on shared links. */
+  patientId?: string;
   exercises: { key: string; name: string; muscle: string }[];
   access: string;
   audience: "clinician" | "recipient";
@@ -56,7 +69,9 @@ export function CompareTool({
 }) {
   const plain = audience !== "clinician";
   const simple = false;
-  const [exercise, setExercise] = useState(initialExercise ?? exercises[0]?.key);
+  const [exercise, setExercise] = useState(
+    initialExercise ?? exercises[0]?.key,
+  );
   const [selected, setSelected] = useState<{ id: string; slot: number }[]>(() =>
     (initialIds ?? []).slice(0, MAX).map((id, slot) => ({ id, slot })),
   );
@@ -68,17 +83,66 @@ export function CompareTool({
   const [signals, setSignals] = useState<Record<string, ClientSignal>>({});
   const [error, setError] = useState<string | null>(null);
 
-  const recs = useMemo(() => recordings.filter((r) => r.exercise === exercise), [recordings, exercise]);
-  const byId = useMemo(() => new Map(recordings.map((r) => [r.id, r])), [recordings]);
+  // Renaming a session from this list. The name just saved is shown at once, before the page reloads.
+  const [renamed, setRenamed] = useState<
+    Record<string, { name: string; title: string }>
+  >({});
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [saving, startSaving] = useTransition();
+  const recordings = useMemo(
+    () =>
+      recordingsIn.map((r) =>
+        renamed[r.sessionId]
+          ? {
+              ...r,
+              sessionName: renamed[r.sessionId].name,
+              sessionTitle: renamed[r.sessionId].title,
+            }
+          : r,
+      ),
+    [recordingsIn, renamed],
+  );
+  const canRename = !!patientId && audience === "clinician";
+  const saveName = (sessionId: string) =>
+    startSaving(async () => {
+      if (DEMO) return setRenameError(DEMO_MSG);
+      const r = await renameSessionAction(patientId!, sessionId, draft);
+      if (!r.ok) return setRenameError(r.error);
+      const i = r.name.lastIndexOf(" · ");
+      setRenamed((prev) => ({
+        ...prev,
+        [sessionId]: {
+          name: r.name,
+          title: i > 0 ? r.name.slice(0, i) : r.name,
+        },
+      }));
+      setEditing(null);
+      setRenameError(null);
+    });
+
+  const recs = useMemo(
+    () => recordings.filter((r) => r.exercise === exercise),
+    [recordings, exercise],
+  );
+  const byId = useMemo(
+    () => new Map(recordings.map((r) => [r.id, r])),
+    [recordings],
+  );
 
   // Sessions for this exercise with their sets, oldest first.
   const sessions = useMemo(() => {
     const m = new Map<string, CompareRecording[]>();
-    for (const r of recs) m.set(r.sessionId, [...(m.get(r.sessionId) ?? []), r]);
+    for (const r of recs)
+      m.set(r.sessionId, [...(m.get(r.sessionId) ?? []), r]);
     return [...m.entries()]
       .map(([sessionId, sets]) => ({
         sessionId,
         date: sets[0].date,
+        title: sets[0].sessionTitle,
+        time: sets[0].sessionTime,
+        name: sets[0].sessionName,
         sets: sets.sort((a, b) => a.setNumber - b.setNumber),
         best: sets.reduce((a, b) => (b.peak > a.peak ? b : a)),
       }))
@@ -91,7 +155,11 @@ export function CompareTool({
       selected
         .map((s) => ({ ...s, rec: byId.get(s.id)! }))
         .filter((s) => s.rec && s.rec.exercise === exercise)
-        .sort((a, b) => a.rec.date.localeCompare(b.rec.date) || a.rec.setNumber - b.rec.setNumber),
+        .sort(
+          (a, b) =>
+            a.rec.date.localeCompare(b.rec.date) ||
+            a.rec.setNumber - b.rec.setNumber,
+        ),
     [selected, byId, exercise],
   );
 
@@ -120,28 +188,38 @@ export function CompareTool({
       return [...prev, { id, slot }];
     });
   };
-  const setMany = (ids: string[]) => setSelected(ids.slice(0, MAX).map((id, slot) => ({ id, slot })));
+  const setMany = (ids: string[]) =>
+    setSelected(ids.slice(0, MAX).map((id, slot) => ({ id, slot })));
 
   const presets = [
     {
       label: plain ? "Start vs now" : "Baseline vs latest",
-      ids: () => (sessions.length ? [sessions[0].best.id, sessions[sessions.length - 1].best.id] : []),
+      ids: () =>
+        sessions.length
+          ? [sessions[0].best.id, sessions[sessions.length - 1].best.id]
+          : [],
     },
     {
       label: plain ? "My journey" : "Progression (5 points)",
       ids: () => {
         const n = sessions.length;
         if (n <= 5) return sessions.map((s) => s.best.id);
-        return [0, 1, 2, 3, 4].map((k) => sessions[Math.round((k * (n - 1)) / 4)].best.id);
+        return [0, 1, 2, 3, 4].map(
+          (k) => sessions[Math.round((k * (n - 1)) / 4)].best.id,
+        );
       },
     },
     {
       label: plain ? "Best day vs now" : "Best vs latest",
       ids: () => {
         if (!sessions.length) return [];
-        const best = sessions.reduce((a, b) => (b.best.peak > a.best.peak ? b : a));
+        const best = sessions.reduce((a, b) =>
+          b.best.peak > a.best.peak ? b : a,
+        );
         const last = sessions[sessions.length - 1];
-        return best.sessionId === last.sessionId ? [last.best.id] : [best.best.id, last.best.id];
+        return best.sessionId === last.sessionId
+          ? [last.best.id]
+          : [best.best.id, last.best.id];
       },
     },
     {
@@ -151,16 +229,27 @@ export function CompareTool({
   ];
 
   const ready = ordered.every((s) => signals[s.id]);
-  const rawLocked = ordered.some((s) => signals[s.id] && !signals[s.id].raw) && channel !== "envelope";
+  const rawLocked =
+    ordered.some((s) => signals[s.id] && !signals[s.id].raw) &&
+    channel !== "envelope";
 
   const chart = useMemo(() => {
     if (!ordered.length || !ready || rawLocked) return null;
     const curves = ordered.map((s) => {
       const sig = signals[s.id];
-      const src = channel === "envelope" ? sig.envelope : channel === "rectified" ? sig.rectified! : sig.raw!;
-      const outHz = channel === "raw" ? sig.fs : channel === "rectified" ? 200 : 100;
+      const src =
+        channel === "envelope"
+          ? sig.envelope
+          : channel === "rectified"
+            ? sig.rectified!
+            : sig.raw!;
+      const outHz =
+        channel === "raw" ? sig.fs : channel === "rectified" ? 200 : 100;
       if (mode === "set") {
-        const r = channel === "raw" ? { y: src, fs: sig.fs } : resample(src, sig.fs, outHz);
+        const r =
+          channel === "raw"
+            ? { y: src, fs: sig.fs }
+            : resample(src, sig.fs, outHz);
         return { fs: r.fs, y: r.y, t0: 0 };
       }
       // Typical repetition: ensemble average of reps aligned on onset.
@@ -174,7 +263,8 @@ export function CompareTool({
         let bestPeak = -1;
         for (const r of reps) {
           let p = 0;
-          for (let i = Math.floor(r.start * sig.fs); i < r.end * sig.fs; i++) p = Math.max(p, sig.envelope[i]);
+          for (let i = Math.floor(r.start * sig.fs); i < r.end * sig.fs; i++)
+            p = Math.max(p, sig.envelope[i]);
           if (p > bestPeak) {
             bestPeak = p;
             best = r;
@@ -225,16 +315,37 @@ export function CompareTool({
   const options = useMemo<Omit<uPlot.Options, "width" | "height">>(
     () => ({
       padding: [12, 16, 0, 0],
-      cursor: { points: { show: false }, drag: { x: true, y: false }, y: false },
+      cursor: {
+        points: { show: false },
+        drag: { x: true, y: false },
+        y: false,
+      },
       scales: { x: { time: false } },
       axes: [
-        { ...AXIS, values: (_u, v) => v.map((s) => `${s.toFixed(1)} s`), label: mode === "rep" ? "Time from start of contraction" : "Time from start of set", labelSize: 18, labelFont: AXIS.font },
-        { ...AXIS, size: 56, values: (_u, v) => v.map((n) => (unit === "%" ? n.toFixed(0) : n.toFixed(2))), label: unit === "%" ? "% of first selection's peak" : "mV", labelSize: 16, labelFont: AXIS.font },
+        {
+          ...AXIS,
+          values: (_u, v) => v.map((s) => `${s.toFixed(1)} s`),
+          label:
+            mode === "rep"
+              ? "Time from start of contraction"
+              : "Time from start of set",
+          labelSize: 18,
+          labelFont: AXIS.font,
+        },
+        {
+          ...AXIS,
+          size: 56,
+          values: (_u, v) =>
+            v.map((n) => (unit === "%" ? n.toFixed(0) : n.toFixed(2))),
+          label: unit === "%" ? "% of first selection's peak" : "mV",
+          labelSize: 16,
+          labelFont: AXIS.font,
+        },
       ],
       series: [
         {},
         ...ordered.map((s) => ({
-          label: dateLabel(s.rec.date),
+          label: s.rec.sessionName,
           stroke: SERIES_COLORS[s.slot],
           width: channel === "raw" ? 1 : 2,
           points: { show: false },
@@ -264,7 +375,9 @@ export function CompareTool({
       const rows = ordered
         .map((s, i) => {
           const v = u.data[i + 1]?.[idx];
-          return v == null ? "" : `<div>${swatch(SERIES_COLORS[s.slot])}${dateLabel(s.rec.date)} · set ${s.rec.setNumber}: <b>${fmtNum(v as number, unit === "%" ? 0 : 3)} ${unit}</b></div>`;
+          return v == null
+            ? ""
+            : `<div>${swatch(SERIES_COLORS[s.slot])}${s.rec.sessionName} · set ${s.rec.setNumber}: <b>${fmtNum(v as number, unit === "%" ? 0 : 3)} ${unit}</b></div>`;
         })
         .join("");
       return `<div style="color:#5c6b82;margin-bottom:3px">${t.toFixed(2)} s</div>${rows}`;
@@ -277,40 +390,51 @@ export function CompareTool({
   const last = ordered[ordered.length - 1]?.rec;
   const exName = exercises.find((e) => e.key === exercise)?.name ?? "";
 
-const controls = (
-          <div className="flex flex-wrap items-center gap-2 px-5 pb-3 pt-3 sm:px-6">
-            <Segmented
-              label="Channel"
-              size="sm"
-              value={channel}
-              onChange={setChannel}
-              options={[
-                { value: "envelope", label: plain ? "Effort (envelope)" : "Envelope" },
-                { value: "rectified", label: "Rectified" },
-                { value: "raw", label: plain ? "Raw signal" : "Raw EMG" },
-              ]}
-            />
-            <Segmented
-              label="Time window"
-              size="sm"
-              value={mode}
-              onChange={setMode}
-              options={[
-                { value: "rep", label: plain ? "One typical rep" : "Average rep", title: "Reps aligned at onset and averaged (raw: strongest rep)" },
-                { value: "set", label: "Whole set" },
-              ]}
-            />
-            <Segmented
-              label="Scale"
-              size="sm"
-              value={scale}
-              onChange={setScale}
-              options={[
-                { value: "abs", label: "mV" },
-                { value: "rel", label: plain ? "% of first" : "% of first", title: "Normalised to the earliest selection's peak" },
-              ]}
-            />
-          </div>
+  const controls = (
+    <div className="flex flex-wrap items-center gap-2 px-5 pb-3 pt-3 sm:px-6">
+      <Segmented
+        label="Channel"
+        size="sm"
+        value={channel}
+        onChange={setChannel}
+        options={[
+          {
+            value: "envelope",
+            label: plain ? "Effort (envelope)" : "Envelope",
+          },
+          { value: "rectified", label: "Rectified" },
+          { value: "raw", label: plain ? "Raw signal" : "Raw EMG" },
+        ]}
+      />
+      <Segmented
+        label="Time window"
+        size="sm"
+        value={mode}
+        onChange={setMode}
+        options={[
+          {
+            value: "rep",
+            label: plain ? "One typical rep" : "Average rep",
+            title: "Reps aligned at onset and averaged (raw: strongest rep)",
+          },
+          { value: "set", label: "Whole set" },
+        ]}
+      />
+      <Segmented
+        label="Scale"
+        size="sm"
+        value={scale}
+        onChange={setScale}
+        options={[
+          { value: "abs", label: "mV" },
+          {
+            value: "rel",
+            label: plain ? "% of first" : "% of first",
+            title: "Normalised to the earliest selection's peak",
+          },
+        ]}
+      />
+    </div>
   );
 
   return (
@@ -318,7 +442,9 @@ const controls = (
       {/* ---------- Picker ---------- */}
       <Card className="flex max-h-none flex-col overflow-hidden lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)]">
         <div className="border-b border-line px-5 pb-4 pt-5">
-          <div className="eyebrow mb-2">1 · {plain ? "Choose an exercise" : "Exercise"}</div>
+          <div className="eyebrow mb-2">
+            1 · {plain ? "Choose an exercise" : "Exercise"}
+          </div>
           <div className="flex flex-col gap-1.5">
             {exercises.map((e) => (
               <button
@@ -330,15 +456,21 @@ const controls = (
                 }}
                 className={cx(
                   "pressable flex min-h-11 cursor-pointer items-center justify-between rounded-xl border px-3 text-left text-sm",
-                  exercise === e.key ? "border-brand bg-brand-tint" : "border-line hover:border-line-strong",
+                  exercise === e.key
+                    ? "border-brand bg-brand-tint"
+                    : "border-line hover:border-line-strong",
                 )}
                 aria-pressed={exercise === e.key}
               >
                 <span>
                   <span className="font-medium">{e.name}</span>
-                  <span className="block text-[12px] text-ink-3">{e.muscle}</span>
+                  <span className="block text-[12px] text-ink-3">
+                    {e.muscle}
+                  </span>
                 </span>
-                {exercise === e.key && <Check className="size-4 text-brand" aria-hidden />}
+                {exercise === e.key && (
+                  <Check className="size-4 text-brand" aria-hidden />
+                )}
               </button>
             ))}
           </div>
@@ -346,7 +478,8 @@ const controls = (
 
         <div className="border-b border-line px-5 py-4">
           <div className="eyebrow mb-2 flex items-center gap-1">
-            <Sparkles className="size-3.5" aria-hidden /> {plain ? "Quick picks" : "Presets"}
+            <Sparkles className="size-3.5" aria-hidden />{" "}
+            {plain ? "Quick picks" : "Presets"}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {presets.map((p) => (
@@ -364,17 +497,27 @@ const controls = (
 
         <div className="flex items-center justify-between px-5 pb-2 pt-4">
           <div className="eyebrow">
-            2 · {plain ? "Pick the days to layer" : "Select recordings"} ({ordered.length}/{MAX})
+            2 · {plain ? "Pick the days to layer" : "Select recordings"} (
+            {ordered.length}/{MAX})
           </div>
           {ordered.length > 0 && (
-            <button type="button" onClick={() => setSelected([])} className="cursor-pointer text-[12px] font-medium text-brand hover:underline">
+            <button
+              type="button"
+              onClick={() => setSelected([])}
+              className="cursor-pointer text-[12px] font-medium text-brand hover:underline"
+            >
               Clear
             </button>
           )}
         </div>
-        <ul className="max-h-72 flex-1 overflow-y-auto px-3 pb-3 lg:max-h-none" aria-label="Sessions">
+        <ul
+          className="max-h-72 flex-1 overflow-y-auto px-3 pb-3 lg:max-h-none"
+          aria-label="Sessions"
+        >
           {[...sessions].reverse().map((s) => {
-            const selInSession = ordered.filter((o) => o.rec.sessionId === s.sessionId);
+            const selInSession = ordered.filter(
+              (o) => o.rec.sessionId === s.sessionId,
+            );
             const isOpen = expanded === s.sessionId;
             const bestSel = selected.find((x) => x.id === s.best.id);
             return (
@@ -385,36 +528,134 @@ const controls = (
                     selInSession.length ? "bg-brand-tint" : "hover:bg-canvas",
                   )}
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggle(s.best.id)}
-                    disabled={!bestSel && selected.length >= MAX}
-                    aria-pressed={!!bestSel}
-                    className="flex min-h-10 flex-1 cursor-pointer items-center gap-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <span
-                      className={cx(
-                        "flex size-5 shrink-0 items-center justify-center rounded-md border-2",
-                        bestSel ? "border-transparent" : "border-line-strong bg-white",
-                      )}
-                      style={bestSel ? { background: SERIES_COLORS[bestSel.slot] } : undefined}
+                  {editing === s.sessionId ? (
+                    <form
+                      className="flex min-h-10 flex-1 flex-wrap items-center gap-1.5"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        saveName(s.sessionId);
+                      }}
                     >
-                      {bestSel && <Check className="size-3.5 text-white" strokeWidth={3} aria-hidden />}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium tabular">{dateLabel(s.date, true)}</span>
-                    </span>
-                    <span className="w-16 text-right text-[12px] text-ink-2 tabular">{s.best.peak.toFixed(2)} mV</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setExpanded(isOpen ? null : s.sessionId)}
-                    aria-expanded={isOpen}
-                    aria-label={`Choose a specific set from ${dateLabel(s.date)}`}
-                    className="flex size-8 cursor-pointer items-center justify-center rounded-full text-ink-3 hover:bg-white hover:text-ink"
-                  >
-                    <ChevronDown className={cx("size-4 transition-transform", isOpen && "rotate-180")} aria-hidden />
-                  </button>
+                      <label
+                        className="sr-only"
+                        htmlFor={`rename-${s.sessionId}`}
+                      >
+                        Session name
+                      </label>
+                      <input
+                        id={`rename-${s.sessionId}`}
+                        autoFocus
+                        value={draft}
+                        maxLength={SESSION_NAME_MAX}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) =>
+                          e.key === "Escape" && setEditing(null)
+                        }
+                        placeholder="Session name"
+                        className="min-h-9 min-w-0 flex-1 rounded-lg border border-line-strong bg-white px-2.5 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+                      />
+                      <button
+                        type="submit"
+                        disabled={saving}
+                        className="pressable rounded-full p-1.5 text-brand hover:bg-white disabled:opacity-50"
+                        aria-label="Save name"
+                      >
+                        <Check className="size-4" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditing(null)}
+                        className="pressable rounded-full p-1.5 text-ink-3 hover:bg-white"
+                        aria-label="Cancel renaming"
+                      >
+                        <X className="size-4" aria-hidden />
+                      </button>
+                      <span className="basis-full text-[11px] text-ink-3">
+                        Saved as “{draft.trim() || fmtDate(s.sets[0].date)} ·{" "}
+                        {s.time}”. Empty = the date.
+                      </span>
+                      {renameError && (
+                        <span
+                          className="basis-full text-[11px] text-bad"
+                          role="alert"
+                        >
+                          {renameError}
+                        </span>
+                      )}
+                    </form>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => toggle(s.best.id)}
+                        disabled={!bestSel && selected.length >= MAX}
+                        aria-pressed={!!bestSel}
+                        className="flex min-h-10 flex-1 cursor-pointer items-center gap-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <span
+                          className={cx(
+                            "flex size-5 shrink-0 items-center justify-center rounded-md border-2",
+                            bestSel
+                              ? "border-transparent"
+                              : "border-line-strong bg-white",
+                          )}
+                          style={
+                            bestSel
+                              ? { background: SERIES_COLORS[bestSel.slot] }
+                              : undefined
+                          }
+                        >
+                          {bestSel && (
+                            <Check
+                              className="size-3.5 text-white"
+                              strokeWidth={3}
+                              aria-hidden
+                            />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium tabular">
+                            {s.title}
+                          </span>
+                          <span className="block text-[12px] text-ink-2 tabular">
+                            {s.time}
+                          </span>
+                        </span>
+                        <span className="w-16 text-right text-[12px] text-ink-2 tabular">
+                          {s.best.peak.toFixed(2)} mV
+                        </span>
+                      </button>
+                      {canRename && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraft(s.title);
+                            setRenameError(null);
+                            setEditing(s.sessionId);
+                          }}
+                          aria-label={`Rename ${s.name}`}
+                          className="flex size-8 cursor-pointer items-center justify-center rounded-full text-ink-3 hover:bg-white hover:text-brand"
+                        >
+                          <Pencil className="size-3.5" aria-hidden />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setExpanded(isOpen ? null : s.sessionId)}
+                        aria-expanded={isOpen}
+                        aria-label={`Choose a specific set from ${s.name}`}
+                        className="flex size-8 cursor-pointer items-center justify-center rounded-full text-ink-3 hover:bg-white hover:text-ink"
+                      >
+                        <ChevronDown
+                          className={cx(
+                            "size-4 transition-transform",
+                            isOpen && "rotate-180",
+                          )}
+                          aria-hidden
+                        />
+                      </button>
+                    </>
+                  )}
                 </div>
                 {isOpen && (
                   <div className="fade-in flex flex-wrap gap-1.5 py-2 pl-10 pr-2">
@@ -429,16 +670,26 @@ const controls = (
                           aria-pressed={!!sel}
                           className={cx(
                             "pressable inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium disabled:opacity-50",
-                            sel ? "border-transparent text-white" : "border-line-strong bg-white text-ink-2",
+                            sel
+                              ? "border-transparent text-white"
+                              : "border-line-strong bg-white text-ink-2",
                           )}
-                          style={sel ? { background: SERIES_COLORS[sel.slot] } : undefined}
+                          style={
+                            sel
+                              ? { background: SERIES_COLORS[sel.slot] }
+                              : undefined
+                          }
                         >
                           Set {r.setNumber} · {r.peak.toFixed(2)}
-                          {r.id === s.best.id && <span className="opacity-80">★</span>}
+                          {r.id === s.best.id && (
+                            <span className="opacity-80">★</span>
+                          )}
                         </button>
                       );
                     })}
-                    <p className="w-full text-[11px] text-ink-3">★ = strongest set (used by default)</p>
+                    <p className="w-full text-[11px] text-ink-3">
+                      ★ = strongest set (used by default)
+                    </p>
                   </div>
                 )}
               </li>
@@ -453,14 +704,15 @@ const controls = (
           <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-5 sm:px-6">
             <div>
               <div className="eyebrow mb-1 flex items-center gap-1">
-                <Layers className="size-3.5" aria-hidden /> 3 · {plain ? "See the difference" : "Overlay"}
+                <Layers className="size-3.5" aria-hidden /> 3 ·{" "}
+                {plain ? "See the difference" : "Overlay"}
               </div>
               <h2 className="title text-[17px] font-semibold">
                 {exName}
                 {ordered.length > 1 && first && last && (
                   <span className="font-normal text-ink-2">
                     {" "}
-                    · {dateLabel(first.date)} → {dateLabel(last.date)}
+                    · {first.sessionName} → {last.sessionName}
                   </span>
                 )}
               </h2>
@@ -468,9 +720,7 @@ const controls = (
           </div>
           {simple ? (
             <div className="px-5 pb-2 pt-1 sm:px-6">
-              <Disclosure summary="Display options">
-                {controls}
-              </Disclosure>
+              <Disclosure summary="Display options">{controls}</Disclosure>
             </div>
           ) : (
             controls
@@ -478,7 +728,11 @@ const controls = (
 
           {/* Legend: always present, chronological, hover to focus */}
           {ordered.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-5 pb-2 sm:px-6" role="list" aria-label="Legend">
+            <div
+              className="flex flex-wrap gap-1.5 px-5 pb-2 sm:px-6"
+              role="list"
+              aria-label="Legend"
+            >
               {ordered.map((s, i) => (
                 <span
                   key={s.id}
@@ -487,13 +741,18 @@ const controls = (
                   onMouseLeave={() => setFocus(null)}
                   className="inline-flex min-h-8 items-center gap-2 rounded-full border border-line bg-white py-1 pl-2.5 pr-1 text-[13px]"
                 >
-                  <span className="inline-block h-[3px] w-4 rounded-full" style={{ background: SERIES_COLORS[s.slot] }} />
-                  <span className="font-medium tabular">{dateLabel(s.rec.date)}</span>
+                  <span
+                    className="inline-block h-[3px] w-4 rounded-full"
+                    style={{ background: SERIES_COLORS[s.slot] }}
+                  />
+                  <span className="font-medium tabular">
+                    {s.rec.sessionName}
+                  </span>
                   <span className="text-ink-3">set {s.rec.setNumber}</span>
                   <button
                     type="button"
                     onClick={() => toggle(s.id)}
-                    aria-label={`Remove ${dateLabel(s.rec.date)} from comparison`}
+                    aria-label={`Remove ${s.rec.sessionName} from comparison`}
                     className="flex size-6 cursor-pointer items-center justify-center rounded-full text-ink-3 hover:bg-canvas hover:text-ink"
                   >
                     <X className="size-3.5" aria-hidden />
@@ -507,17 +766,30 @@ const controls = (
             {!ordered.length && (
               <div className="mx-3 flex h-[320px] flex-col items-center justify-center gap-2 rounded-xl bg-canvas text-center">
                 <Layers className="size-6 text-ink-3" aria-hidden />
-                <p className="text-sm font-medium">{plain ? "Pick two or more days to see them layered" : "Select recordings to overlay"}</p>
-                <p className="text-[13px] text-ink-2">Try a quick pick on the left — like “{presets[0].label}”.</p>
+                <p className="text-sm font-medium">
+                  {plain
+                    ? "Pick two or more days to see them layered"
+                    : "Select recordings to overlay"}
+                </p>
+                <p className="text-[13px] text-ink-2">
+                  Try a quick pick on the left — like “{presets[0].label}”.
+                </p>
               </div>
             )}
-            {error && <p className="px-3 py-6 text-center text-sm text-bad">Could not load a recording: {error}</p>}
+            {error && (
+              <p className="px-3 py-6 text-center text-sm text-bad">
+                Could not load a recording: {error}
+              </p>
+            )}
             {ordered.length > 0 && rawLocked && (
               <div className="mx-3 flex h-[320px] items-center justify-center rounded-xl bg-canvas text-sm text-ink-2">
-                Raw and rectified signals were not included in this share. Envelope is available.
+                Raw and rectified signals were not included in this share.
+                Envelope is available.
               </div>
             )}
-            {ordered.length > 0 && !rawLocked && !chart && <div className="mx-3 h-[320px] animate-pulse rounded-xl bg-canvas" />}
+            {ordered.length > 0 && !rawLocked && !chart && (
+              <div className="mx-3 h-[320px] animate-pulse rounded-xl bg-canvas" />
+            )}
             {chart && (
               <UChart
                 key={slotsKey + channel + mode + unit}
@@ -532,7 +804,9 @@ const controls = (
           </div>
         </Card>
 
-        {ordered.length > 0 && <ComparisonTable ordered={ordered} plain={plain} simple={simple} />}
+        {ordered.length > 0 && (
+          <ComparisonTable ordered={ordered} plain={plain} simple={simple} />
+        )}
       </div>
     </div>
   );
@@ -551,7 +825,9 @@ function ComparisonTable({
   const last = ordered[ordered.length - 1].rec;
   const ratio = last.peak / first.peak;
   const change = (v: number, base: number) => ((v - base) / base) * 100;
-  const days = Math.round((new Date(last.date).getTime() - new Date(first.date).getTime()) / 864e5);
+  const days = Math.round(
+    (new Date(last.date).getTime() - new Date(first.date).getTime()) / 864e5,
+  );
 
   return (
     <Card>
@@ -560,12 +836,19 @@ function ComparisonTable({
           <p className="text-[15px] leading-relaxed">
             {plain ? (
               <>
-                Over <b>{days} days</b>, your strongest effort went from <b className="tabular">{first.peak.toFixed(2)} mV</b> to{" "}
+                Over <b>{days} days</b>, your strongest effort went from{" "}
+                <b className="tabular">{first.peak.toFixed(2)} mV</b> to{" "}
                 <b className="tabular">{last.peak.toFixed(2)} mV</b> —{" "}
                 {ratio >= 1.05 ? (
-                  <span className="font-semibold text-good">{ratio >= 1.5 ? `${ratio.toFixed(1)}× as strong` : `${change(last.peak, first.peak).toFixed(0)}% stronger`}</span>
+                  <span className="font-semibold text-good">
+                    {ratio >= 1.5
+                      ? `${ratio.toFixed(1)}× as strong`
+                      : `${change(last.peak, first.peak).toFixed(0)}% stronger`}
+                  </span>
                 ) : ratio <= 0.95 ? (
-                  <span className="font-semibold text-warn">{Math.abs(change(last.peak, first.peak)).toFixed(0)}% lower</span>
+                  <span className="font-semibold text-warn">
+                    {Math.abs(change(last.peak, first.peak)).toFixed(0)}% lower
+                  </span>
                 ) : (
                   <span className="font-semibold">about the same</span>
                 )}
@@ -573,27 +856,59 @@ function ComparisonTable({
               </>
             ) : (
               <>
-                Peak envelope {change(last.peak, first.peak) >= 0 ? "increased" : "decreased"}{" "}
-                <b className="tabular">{Math.abs(change(last.peak, first.peak)).toFixed(1)}%</b> over {days} days (
-                {first.peak.toFixed(3)} → {last.peak.toFixed(3)} mV). Median frequency {last.mdf >= first.mdf ? "+" : ""}
-                {(last.mdf - first.mdf).toFixed(1)} Hz; fatigue index {first.fatigue.toFixed(0)}% → {last.fatigue.toFixed(0)}%.
+                Peak envelope{" "}
+                {change(last.peak, first.peak) >= 0 ? "increased" : "decreased"}{" "}
+                <b className="tabular">
+                  {Math.abs(change(last.peak, first.peak)).toFixed(1)}%
+                </b>{" "}
+                over {days} days ({first.peak.toFixed(3)} →{" "}
+                {last.peak.toFixed(3)} mV). Median frequency{" "}
+                {last.mdf >= first.mdf ? "+" : ""}
+                {(last.mdf - first.mdf).toFixed(1)} Hz; fatigue index{" "}
+                {first.fatigue.toFixed(0)}% → {last.fatigue.toFixed(0)}%.
               </>
             )}
           </p>
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className={cx("w-full text-sm", simple ? "min-w-[360px]" : "min-w-[620px]")}>
+        <table
+          className={cx(
+            "w-full text-sm",
+            simple ? "min-w-[360px]" : "min-w-[620px]",
+          )}
+        >
           <thead>
             <tr className="text-left text-[12px] text-ink-2">
               <th className="px-5 py-3 font-medium sm:px-6">Recording</th>
-              <th className="px-3 py-3 text-right font-medium">{plain ? "Strongest effort" : "Peak"}</th>
-              <th className={cx("py-3 text-right font-medium", simple ? "px-5 sm:px-6" : "px-3")}>vs first</th>
+              <th className="px-3 py-3 text-right font-medium">
+                {plain ? "Strongest effort" : "Peak"}
+              </th>
+              <th
+                className={cx(
+                  "py-3 text-right font-medium",
+                  simple ? "px-5 sm:px-6" : "px-3",
+                )}
+              >
+                vs first
+              </th>
               {!simple && (
                 <>
-                  <th className="px-3 py-3 text-right font-medium">{plain ? "Average effort" : "Mean"}</th>
-                  <th className="px-3 py-3 text-right font-medium" title="Median frequency">{plain ? "Freshness" : "MDF"}</th>
-                  <th className="px-5 py-3 text-right font-medium sm:px-6" title="Last reps vs first reps">{plain ? "Effort drop" : "Fatigue idx"}</th>
+                  <th className="px-3 py-3 text-right font-medium">
+                    {plain ? "Average effort" : "Mean"}
+                  </th>
+                  <th
+                    className="px-3 py-3 text-right font-medium"
+                    title="Median frequency"
+                  >
+                    {plain ? "Freshness" : "MDF"}
+                  </th>
+                  <th
+                    className="px-5 py-3 text-right font-medium sm:px-6"
+                    title="Last reps vs first reps"
+                  >
+                    {plain ? "Effort drop" : "Fatigue idx"}
+                  </th>
                 </>
               )}
             </tr>
@@ -605,20 +920,47 @@ function ComparisonTable({
                 <tr key={s.id} className="border-t border-line">
                   <td className="px-5 py-3 sm:px-6">
                     <span className="inline-flex items-center gap-2">
-                      <span className="inline-block size-2.5 rounded-full" style={{ background: SERIES_COLORS[s.slot] }} />
-                      <span className="font-medium tabular">{dateLabel(s.rec.date, true)}</span>
+                      <span
+                        className="inline-block size-2.5 rounded-full"
+                        style={{ background: SERIES_COLORS[s.slot] }}
+                      />
+                      <span className="font-medium tabular">
+                        {s.rec.sessionName}
+                      </span>
                       <span className="text-ink-3">set {s.rec.setNumber}</span>
                     </span>
                   </td>
-                  <td className="px-3 py-3 text-right tabular">{s.rec.peak.toFixed(3)} mV</td>
-                  <td className={cx("py-3 text-right font-medium tabular", simple ? "px-5 sm:px-6" : "px-3", i === 0 ? "text-ink-3" : c > 0.5 ? "text-good" : c < -0.5 ? "text-bad" : "text-ink-2")}>
-                    {i === 0 ? "reference" : `${c > 0 ? "+" : ""}${c.toFixed(1)}%`}
+                  <td className="px-3 py-3 text-right tabular">
+                    {s.rec.peak.toFixed(3)} mV
+                  </td>
+                  <td
+                    className={cx(
+                      "py-3 text-right font-medium tabular",
+                      simple ? "px-5 sm:px-6" : "px-3",
+                      i === 0
+                        ? "text-ink-3"
+                        : c > 0.5
+                          ? "text-good"
+                          : c < -0.5
+                            ? "text-bad"
+                            : "text-ink-2",
+                    )}
+                  >
+                    {i === 0
+                      ? "reference"
+                      : `${c > 0 ? "+" : ""}${c.toFixed(1)}%`}
                   </td>
                   {!simple && (
                     <>
-                      <td className="px-3 py-3 text-right tabular">{s.rec.mean.toFixed(3)} mV</td>
-                      <td className="px-3 py-3 text-right tabular">{s.rec.mdf.toFixed(0)} Hz</td>
-                      <td className="px-5 py-3 text-right tabular sm:px-6">{s.rec.fatigue.toFixed(0)}%</td>
+                      <td className="px-3 py-3 text-right tabular">
+                        {s.rec.mean.toFixed(3)} mV
+                      </td>
+                      <td className="px-3 py-3 text-right tabular">
+                        {s.rec.mdf.toFixed(0)} Hz
+                      </td>
+                      <td className="px-5 py-3 text-right tabular sm:px-6">
+                        {s.rec.fatigue.toFixed(0)}%
+                      </td>
                     </>
                   )}
                 </tr>

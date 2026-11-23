@@ -56,6 +56,7 @@ const ACTION_META: Record<AuditAction, { label: string; Icon: typeof Eye }> = {
   suggestion_approved: { label: "Approved a draft", Icon: NotebookPen },
   suggestion_rejected: { label: "Declined a draft", Icon: NotebookPen },
   load_prescribed: { label: "Changed working weight", Icon: Dumbbell },
+  session_renamed: { label: "Renamed a session", Icon: NotebookPen },
   settings_updated: { label: "Changed clinic settings", Icon: Settings2 },
 };
 

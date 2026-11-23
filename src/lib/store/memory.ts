@@ -11,9 +11,7 @@ import type {
   Share,
   SignalData,
   Suggestion,
-  WeightSettings,
 } from "../types";
-import { withWeightDefaults } from "../types";
 import type { Store } from "./types";
 
 interface DB {
@@ -26,8 +24,6 @@ interface DB {
   receipts: DeletionReceipt[];
   /** Added after v6; optional so existing store files keep their data. */
   suggestions?: Suggestion[];
-  /** Clinic weight list; optional so older store files keep working. */
-  weights?: WeightSettings;
 }
 
 const DB_VERSION = 6;
@@ -238,14 +234,6 @@ export class MemoryStore implements Store {
   async updateSuggestion(id: string, patch: Partial<Suggestion>) {
     const s = (this.db.suggestions ?? []).find((x) => x.id === id);
     if (s) Object.assign(s, patch);
-    this.persist();
-  }
-
-  async getWeightSettings() {
-    return structuredClone(withWeightDefaults(this.db.weights));
-  }
-  async saveWeightSettings(w: WeightSettings) {
-    this.db.weights = w;
     this.persist();
   }
 }

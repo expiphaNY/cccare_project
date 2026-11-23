@@ -15,7 +15,6 @@ import type {
   Share,
   SignalData,
   Suggestion,
-  WeightSettings,
 } from "../types";
 
 /**
@@ -58,8 +57,4 @@ export interface Store {
   getSuggestion(id: string): Promise<Suggestion | null>;
   createSuggestion(s: Suggestion): Promise<void>;
   updateSuggestion(id: string, patch: Partial<Suggestion>): Promise<void>;
-
-  /** Clinic-wide weight options offered by the recorder. */
-  getWeightSettings(): Promise<WeightSettings>;
-  saveWeightSettings(w: WeightSettings): Promise<void>;
 }

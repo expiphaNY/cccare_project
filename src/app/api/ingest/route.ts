@@ -15,12 +15,13 @@
 
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { logAccess } from "@/lib/data";
+import { defaultSessionName } from "@/lib/format";
 import { analyzeSignal, deriveChannels } from "@/lib/signal";
 import { verifyReps } from "@/lib/rep-verify";
 import { analyzeTremor } from "@/lib/tremor";
 import { getStore } from "@/lib/store";
 import type { ExerciseKey, MotionData, Recording } from "@/lib/types";
-import { EXERCISES, makeLoad } from "@/lib/types";
+import { EXERCISES, isValidLoadValue, makeLoad } from "@/lib/types";
 
 /**
  * UPLOAD ENDPOINT FOR A DEVICE (not the browser).
@@ -89,7 +90,8 @@ export async function POST(req: Request) {
   // A "session" is one visit. Sets from the same day go into the same session.
   const sessionId = typeof body.sessionId === "string" && body.sessionId ? body.sessionId : `${patient.id}-${recordedAt.slice(0, 10)}`;
   if (!(await store.getSession(sessionId)))
-    await store.upsertSession({ id: sessionId, patientId: patient.id, startedAt: recordedAt, location: "home" });
+    // Named by the date and start time, like every session ("Nov 22, 2026 · 4:35 PM").
+    await store.upsertSession({ id: sessionId, patientId: patient.id, startedAt: recordedAt, name: defaultSessionName(recordedAt), location: "home" });
 
   // Measure the set (peak, reps, fatigue...).
   const metrics = analyzeSignal(raw, rectified, envelope, fs);
@@ -98,10 +100,10 @@ export async function POST(req: Request) {
   const axis = (a: unknown) => (Array.isArray(a) && a.length === raw.length && a.every((x) => typeof x === "number" && Number.isFinite(x)) ? Float32Array.from(a as number[]) : null);
   const mx = axis(m?.x), my = axis(m?.y), mz = axis(m?.z);
   const motion: MotionData | undefined = mx && my && mz ? { x: mx, y: my, z: mz } : undefined;
-  // The weight lifted is optional too. Ignore silly values (below 0 or above 200).
+  // The weight lifted is optional too: a number from 0 to MAX_LOAD, in kg or lb (kg when the unit is missing).
   const lo = body.load as { value?: unknown; unit?: unknown } | undefined;
   const lv = Number(lo?.value);
-  const load = lo && Number.isFinite(lv) && lv >= 0 && lv <= 200 ? makeLoad(lv, lo.unit === "lb" ? "lb" : "kg") : undefined;
+  const load = lo && isValidLoadValue(lv) ? makeLoad(lv, lo.unit === "lb" ? "lb" : "kg") : undefined;
   const rec: Recording = {
     id: `${sessionId}-${exercise}-${Number(body.setNumber) || 1}-${randomUUID().slice(0, 6)}`,
     patientId: patient.id,

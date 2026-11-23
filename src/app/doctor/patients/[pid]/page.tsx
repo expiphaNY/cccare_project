@@ -22,7 +22,7 @@ import { AccessLog } from "@/components/transparency";
 import { Badge, Card, CardHeader } from "@/components/ui";
 import { shouldLog } from "@/lib/access";
 import { clinicianActor, getPatientBundle, logAccess } from "@/lib/data";
-import { fmtDate, fmtShortDate, fmtTime, fullName } from "@/lib/format";
+import { fmtTime, fullName, sessionName, sessionTitle } from "@/lib/format";
 import { getStore } from "@/lib/store";
 import { EXERCISES } from "@/lib/types";
 import { summaries, trendProps } from "@/lib/viewmodels";
@@ -35,7 +35,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
   const { patient: p, sessions, recordings } = bundle;
   if (shouldLog(`clin|${pid}|profile`, 10 * 60_000)) await logAccess(pid, clinicianActor, "profile_viewed", "Opened patient overview.");
   const store = await getStore();
-  const [audit, weights] = await Promise.all([store.listAudit(pid), store.getWeightSettings()]);
+  const audit = await store.listAudit(pid);
   const loadPoints: LoadPoint[] = sessions.flatMap((s) => {
     const recs = recordings.filter((r) => r.sessionId === s.id);
     const loaded = recs.filter((r) => r.load);
@@ -48,6 +48,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
       {
         sessionId: s.id,
         date: s.startedAt.slice(0, 10),
+        name: sessionName(s),
         kg: top.load!.kg,
         label: top.load!.value === 0 ? "None" : `${top.load!.value}${top.load!.unit}`,
         verified: checked.length ? v : null,
@@ -64,7 +65,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
     const mg = recs.reduce((t, r) => t + r.tremor!.headlineMg, 0) / recs.length;
     const top = recs.reduce((a, b) => (b.tremor!.headlineMg > a.tremor!.headlineMg ? b : a));
     const loaded = recs.find((r) => r.load);
-    return [{ sessionId: s.id, date: s.startedAt.slice(0, 10), mg: Math.round(mg * 10) / 10, peakHz: top.tremor!.peakHz, rhythmic: top.tremor!.rhythmic, loadLabel: loaded ? fmtLoad(loaded.load) : null }];
+    return [{ sessionId: s.id, date: s.startedAt.slice(0, 10), name: sessionName(s), mg: Math.round(mg * 10) / 10, peakHz: top.tremor!.peakHz, rhythmic: top.tremor!.rhythmic, loadLabel: loaded ? fmtLoad(loaded.load) : null }];
   });
   const loadGroups = new Map<string, { label: string; kg: number; sum: number; sets: number }>();
   for (const r of recordings)
@@ -101,7 +102,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
       </div>
 
       <div {...agentTarget("load-card", "Prescribed weight, weight per session and rep verification")}>
-        <LoadCard patientId={pid} prescribed={p.prescribedLoad} weights={weights} points={loadPoints} baseHref={base} />
+        <LoadCard patientId={pid} prescribed={p.prescribedLoad} points={loadPoints} baseHref={base} />
       </div>
 
       {tremorPoints.length > 0 && (
@@ -141,7 +142,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
                   <li key={s.id}>
                     <Link href={`${base}/sessions/${s.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 hover:bg-brand-tint/60 sm:px-6">
                       <span className="w-32 text-sm font-medium tabular">
-                        {fmtDate(s.startedAt)}
+                        {sessionTitle(s)}
                         <span className="block text-[12px] font-normal text-ink-2">{fmtTime(s.startedAt)}</span>
                       </span>
                       <span className="inline-flex w-20 items-center gap-1 text-[13px] text-ink-2">
@@ -170,7 +171,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
         </Card>
 
         <Card>
-          <CardHeader title="Latest session" subtitle={latest ? `${fmtDate(latest.startedAt)} · ${fmtTime(latest.startedAt)}` : undefined} />
+          <CardHeader title="Latest session" subtitle={latest ? sessionName(latest) : undefined} />
           {latestBest && (
             <div className="space-y-4 px-5 pb-5 pt-4 sm:px-6">
               <div>
@@ -215,7 +216,7 @@ export default async function PatientOverview({ params }: PageProps<"/doctor/pat
               notes.map((s) => (
                 <li key={s.id} className="rounded-xl bg-canvas px-3 py-2.5">
                   <Link href={`${base}/sessions/${s.id}`} className="text-[12px] font-medium text-brand hover:underline">
-                    {fmtShortDate(s.startedAt)} · {fmtTime(s.startedAt)}
+                    {sessionName(s)}
                   </Link>
                   <NoteList patientId={p.id} sessionId={s.id} notes={s.notes!} editable className="mt-1" />
                 </li>

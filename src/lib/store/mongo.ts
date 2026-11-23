@@ -20,9 +20,7 @@ import type {
   Share,
   SignalData,
   Suggestion,
-  WeightSettings,
 } from "../types";
-import { withWeightDefaults } from "../types";
 import type { Store } from "./types";
 
 /**
@@ -34,13 +32,14 @@ import type { Store } from "./types";
  *   shares                         = private links for outside viewers
  *   audit_events                   = a log of who looked at what
  *   deletion_receipts              = proof that data was deleted (holds no health data)
- *   suggestions, settings          = the AI helper's ideas and clinic settings
+ *   suggestions                    = the AI helper's ideas (drafts the clinician approves or declines)
  *
  * Why the waveform is separate: it is large, and most pages only need the small facts.
  *
  * Technical detail (for reference):
  *  patients           { _id: patientId, ...Patient }
- *  sessions           { _id: sessionId, patientId, startedAt, ... }       idx: {patientId, startedAt}
+ *  sessions           { _id: sessionId, patientId, startedAt, name, location, painScore?, notes? }   idx: {patientId, startedAt}
+ *                     (name = what the clinician typed, or the date, then " · " and the start time)
  *  recordings         { _id: recordingId, patientId, sessionId, exercise, setNumber, recordedAt, metrics, ... }
  *                                                                          idx: {patientId, recordedAt}, {sessionId}
  *  signals            { _id: recordingId, patientId, sampleRateHz, raw: BinData(float32 LE), rectified, envelope, motion?{x,y,z} }
@@ -50,12 +49,12 @@ import type { Store } from "./types";
  *  audit_events       { _id, patientId, at, actor, action, detail }        idx: {patientId, at:-1}
  *  deletion_receipts  { _id, patientRef(sha256), deletedAt, counts }       (no health data)
  *  suggestions        { _id, patientId, kind, status, createdAt, title, body, proposedLoad?, ... } idx: {patientId, createdAt:-1}
- *  settings           { _id: "weights", unit, options[], updatedAt, updatedBy }   clinic-wide weight list
  *
- *  recordings also carry  load { value, unit, kg }  (weight lifted in the set)
+ *  recordings also carry  load { value, unit, kg }  (weight lifted in the set: the number the clinician typed,
+ *                         the unit they picked (kg or lb), and the same weight in kg so sets in different units compare)
  *  and repCheck { status, emgReps, motionReps, verifiedReps, agreement, reps[] }
  *  and tremor { level, headlineMg, holdRmsMg, offAxisRmsMg, peakHz, rhythmicityPct, perRepMg[], ... }
- *  (EMG vs accelerometer cross-check). patients carry prescribedLoad.
+ *  (EMG vs accelerometer cross-check). patients carry prescribedLoad { value, unit, kg }, entered the same way.
  *
  * Production hardening (not needed for the demo): enable Queryable Encryption
  * or CSFLE on name/dob/mrn, TLS-only connections, and a least-privilege DB user.
@@ -324,14 +323,5 @@ export class MongoStore implements Store {
   async updateSuggestion(id: string, patch: Partial<Suggestion>) {
     const c = await this.col<Suggestion>("suggestions");
     await c.updateOne({ _id: id }, { $set: patch });
-  }
-
-  async getWeightSettings(): Promise<WeightSettings> {
-    const c = await this.col<WeightSettings>("settings");
-    return withWeightDefaults(strip(await c.findOne({ _id: "weights" })));
-  }
-  async saveWeightSettings(w: WeightSettings) {
-    const c = await this.col<WeightSettings>("settings");
-    await c.replaceOne({ _id: "weights" }, { ...w } as never, { upsert: true });
   }
 }

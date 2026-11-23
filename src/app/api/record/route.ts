@@ -18,13 +18,15 @@
 //   3. For each set: clean the signal (if raw was sent), measure it (peak, average, reps,
 //      fatigue), count the reps with the muscle signal and with the arm movement and
 //      compare them, and measure shakiness from the accelerometer.
-//   4. Save one session, with one recording per set.
+//   4. Save one session (named, with its start time), with one recording per set. The weight of each set is
+//      stored on its recording as { value, unit, kg } in MongoDB.
 //   5. Write one plain sentence in the access log.
 //
 // WHAT THE BROWSER SENDS    POST /api/record?patient=<id>&as=clinician
 //   {
 //     "exercise": "bicep-curl",
 //     "location": "home" | "clinic",
+//     "sessionName": "Week 3 elbow",        // optional: what the clinician typed. The start time is added; empty = the date
 //     "painScore": 3,                      // optional, 0 to 10
 //     "deviceName": "MyoWareSensor1",
 //     "transport": "web-bluetooth" | "web-serial" | "bridge" | "demo",
@@ -40,7 +42,7 @@
 //       "raw": [ ...raw muscle readings in mV, same clock... ],   // optional (firmware with SEND_RAW)
 //       "clippedPct": 4.2,                 // optional: share of readings stuck at the sensor's maximum
 //       "motion": { "x": [..g..], "y": [..g..], "z": [..g..] },   // optional, same length as "values", exactly as the chip sent it
-//       "load": { "value": 5, "unit": "kg" }         // optional: the weight lifted
+//       "load": { "value": 5, "unit": "kg" | "lb" }  // the weight lifted: any number the clinician typed, in the unit they picked
 //     }]
 //   }
 //
@@ -59,13 +61,14 @@
 import { randomUUID } from "node:crypto";
 import { authorize } from "@/lib/access";
 import { logAccess } from "@/lib/data";
+import { SESSION_NAME_MAX, defaultSessionName } from "@/lib/format";
 import { EMG_HIGHPASS_HZ, envelopeFromRaw } from "@/lib/emg-filter";
 import { analyzeSignal, deriveChannels } from "@/lib/signal";
 import { verifyReps } from "@/lib/rep-verify";
 import { analyzeTremor, tremorLevel } from "@/lib/tremor";
 import { getStore } from "@/lib/store";
 import type { ChannelKey, ExerciseKey, Load, LiveCapture, MotionData, Recording, Session, SignalData, ValueScale } from "@/lib/types";
-import { EXERCISES, VALUE_SCALES, fmtLoad, makeLoad } from "@/lib/types";
+import { EXERCISES, MAX_LOAD, VALUE_SCALES, fmtLoad, isValidLoadValue, makeLoad } from "@/lib/types";
 
 /** The most sets one session may hold. */
 const MAX_SETS = 20;
@@ -149,9 +152,16 @@ export async function POST(req: Request) {
         ? { x: Float32Array.from(mx), y: Float32Array.from(my), z: Float32Array.from(mz) }
         : undefined;
 
+    // The weight lifted: the number typed, the unit picked (kg or lb), and the same weight in kg.
+    // A weight that is not a number, or outside 0 to MAX_LOAD, is refused rather than silently dropped.
     const lo = s.load as { value?: unknown; unit?: unknown } | undefined;
-    const lv = Number(lo?.value);
-    const load: Load | undefined = lo && Number.isFinite(lv) && lv >= 0 && lv <= 200 ? makeLoad(lv, lo.unit === "lb" ? "lb" : "kg") : undefined;
+    let load: Load | undefined;
+    if (lo) {
+      const lv = Number(lo.value);
+      if (!isValidLoadValue(lv) || (lo.unit !== "kg" && lo.unit !== "lb"))
+        return Response.json({ error: `Set ${i + 1}: the weight must be a number from 0 to ${MAX_LOAD} in kg or lb` }, { status: 400 });
+      load = makeLoad(lv, lo.unit);
+    }
 
     const startedAt = typeof s.startedAt === "string" && !Number.isNaN(Date.parse(s.startedAt)) ? new Date(s.startedAt).toISOString() : new Date().toISOString();
     // Measure the set, then count the reps with both sensors and compare them.
@@ -198,10 +208,14 @@ export async function POST(req: Request) {
   // Step 4: save. One session, and one recording for each set.
   const startedAt = parsed[0].rec.recordedAt;
   const pain = Number(body.painScore);
+  // The name is what was typed (or the date) followed by the start time, e.g. "Week 3 elbow · 4:35 PM".
+  const typedName = typeof body.sessionName === "string" ? body.sessionName : "";
+  if (typedName.trim().length > SESSION_NAME_MAX) return Response.json({ error: `The session name must be under ${SESSION_NAME_MAX} characters` }, { status: 400 });
   const session: Session = {
     id: `${patientId}-live-${startedAt.slice(0, 10)}-${randomUUID().slice(0, 6)}`,
     patientId,
     startedAt,
+    name: defaultSessionName(startedAt, typedName),
     location: body.location === "clinic" ? "clinic" : "home",
     ...(grant.actor.role === "clinician" && { clinicianId: patient.clinicianId }),
     ...(body.painScore != null && Number.isFinite(pain) && { painScore: Math.min(10, Math.max(0, Math.round(pain))) }),
@@ -220,7 +234,7 @@ export async function POST(req: Request) {
     patientId,
     grant.actor,
     "data_recorded",
-    `Recorded ${parsed.length} set${parsed.length === 1 ? "" : "s"} live (${EXERCISES[exercise].name}${loads.length ? ` · ${loads.join(", ")}` : ""}${parsed.some((p) => p.rec.hasMotion) ? ` · reps verified on ${verified}/${parsed.length}` : ""}${shakiest ? ` · shakiness up to ${shakiest.headlineMg} mg (${tremorLevel(shakiest.headlineMg).label.toLowerCase()})` : ""}) ${
+    `Recorded ${parsed.length} set${parsed.length === 1 ? "" : "s"} live as “${session.name}” (${EXERCISES[exercise].name}${loads.length ? ` · ${loads.join(", ")}` : ""}${parsed.some((p) => p.rec.hasMotion) ? ` · reps verified on ${verified}/${parsed.length}` : ""}${shakiest ? ` · shakiness up to ${shakiest.headlineMg} mg (${tremorLevel(shakiest.headlineMg).label.toLowerCase()})` : ""}) ${
       transport === "demo" ? "from the simulated demo sensor" : `from ${deviceName} over Bluetooth${transport === "web-bluetooth" ? "" : " serial"}`
     }.`,
   );

@@ -14,7 +14,7 @@ import { shouldLog } from "@/lib/access";
 import { clinicianActor, getPatientBundle, logAccess } from "@/lib/data";
 import { DEMO } from "@/lib/demo";
 import { sessionParams } from "@/lib/demo/params";
-import { fmtDateTime } from "@/lib/format";
+import { sessionName } from "@/lib/format";
 import { getStore } from "@/lib/store";
 
 export const generateStaticParams = DEMO ? sessionParams : undefined;
@@ -27,7 +27,7 @@ export default async function DoctorSessionPage({ params, searchParams }: PagePr
   const session = bundle.sessions.find((s) => s.id === sid);
   if (!session) notFound();
   if (shouldLog(`clin|${sid}|session`, 10 * 60_000))
-    await logAccess(pid, clinicianActor, "session_viewed", `Opened session of ${fmtDateTime(session.startedAt)}.`);
+    await logAccess(pid, clinicianActor, "session_viewed", `Opened session “${sessionName(session)}”.`);
 
   const recs = bundle.recordings.filter((r) => r.sessionId === sid);
   const store = await getStore();

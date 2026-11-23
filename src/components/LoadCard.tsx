@@ -14,12 +14,15 @@ import { Activity, ArrowRight, CircleCheck, Dumbbell, TriangleAlert } from "luci
 import { setPrescribedLoadAction } from "@/app/actions";
 import { DEMO, DEMO_MSG } from "@/lib/demo";
 import { tremorLevel } from "@/lib/tremor";
-import { fmtLoad, type Load, type WeightSettings } from "@/lib/types";
+import { fmtLoad, type Load } from "@/lib/types";
 import { Card, CardHeader, btn, cx } from "./ui";
+import { WeightInput } from "./WeightInput";
 
 export interface LoadPoint {
   sessionId: string;
   date: string;
+  /** The session's name with its start time, for the hover text. */
+  name: string;
   /** Heaviest weight used in the session (kg, for the chart). */
   kg: number;
   label: string;
@@ -33,13 +36,11 @@ export interface LoadPoint {
 export function LoadCard({
   patientId,
   prescribed,
-  weights,
   points,
   baseHref,
 }: {
   patientId: string;
   prescribed?: Load;
-  weights: WeightSettings;
   points: LoadPoint[];
   baseHref: string;
 }) {
@@ -58,7 +59,7 @@ export function LoadCard({
         subtitle="Weight lifted per session (heaviest set) and how many reps both EMG and the accelerometer confirmed."
       />
       <div className="grid gap-6 px-5 pb-5 pt-4 sm:px-6 lg:grid-cols-[220px_1fr_200px]">
-        <PrescribedForm patientId={patientId} prescribed={prescribed} weights={weights} />
+        <PrescribedForm patientId={patientId} prescribed={prescribed} />
 
         <div>
           {recent.length ? (
@@ -70,8 +71,8 @@ export function LoadCard({
                     href={`${baseHref}/sessions/${p.sessionId}`}
                     className="pressable w-full max-w-10 rounded-t-lg bg-brand/80 hover:bg-brand"
                     style={{ height: `${Math.max(6, (p.kg / maxKg) * 84)}px` }}
-                    title={`${p.date}: ${p.label}, ${p.verified ?? p.emg} reps${p.verified != null ? " verified" : " (EMG only)"}`}
-                    aria-label={`${p.date}: ${p.label}`}
+                    title={`${p.name}: ${p.label}, ${p.verified ?? p.emg} reps${p.verified != null ? " verified" : " (EMG only)"}`}
+                    aria-label={`${p.name}: ${p.label}`}
                   />
                   <span
                     className={cx(
@@ -87,7 +88,7 @@ export function LoadCard({
               ))}
             </ol>
           ) : (
-            <p className="text-sm text-ink-2">No weights recorded yet. Pick a weight in New measurement and it is saved with each set.</p>
+            <p className="text-sm text-ink-2">No weights recorded yet. Type a weight in New measurement and it is saved with each set.</p>
           )}
           <p className="mt-2 text-[11px] text-ink-3">Bar = weight · number below = reps (✓ all verified, ⚠ sensors disagreed on some).</p>
         </div>
@@ -111,17 +112,19 @@ export function LoadCard({
   );
 }
 
-function PrescribedForm({ patientId, prescribed, weights }: { patientId: string; prescribed?: Load; weights: WeightSettings }) {
-  const [value, setValue] = useState(String(prescribed && prescribed.unit === weights.unit ? prescribed.value : (weights.options.find((x) => x > 0) ?? 0)));
+function PrescribedForm({ patientId, prescribed }: { patientId: string; prescribed?: Load }) {
+  // The weight being typed. null = the box is empty or invalid, which keeps the Set button off.
+  const [load, setLoad] = useState<Load | null>(prescribed ?? null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
+        if (!load) return;
         start(async () => {
           if (DEMO) return setMsg({ ok: false, text: DEMO_MSG });
-          const r = await setPrescribedLoadAction(patientId, Number(value), weights.unit);
+          const r = await setPrescribedLoadAction(patientId, load.value, load.unit);
           setMsg(r.ok ? { ok: true, text: "Saved." } : { ok: false, text: r.error });
         });
       }}
@@ -129,26 +132,12 @@ function PrescribedForm({ patientId, prescribed, weights }: { patientId: string;
       <div className="text-[12px] text-ink-2">Prescribed working weight</div>
       <div className="display mt-1 text-[28px] font-semibold leading-none">{fmtLoad(prescribed)}</div>
       <p className="mt-1 text-[12px] text-ink-3">New measurements start at this weight.</p>
-      <div className="mt-3 flex gap-2">
-        <label className="sr-only" htmlFor={`pl-${patientId}`}>
-          New working weight
-        </label>
-        <select
-          id={`pl-${patientId}`}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          className="min-h-9 flex-1 rounded-xl border border-line-strong bg-white px-2 text-sm"
-        >
-          {weights.options.map((w) => (
-            <option key={w} value={w}>
-              {w === 0 ? "No weight" : `${w} ${weights.unit}`}
-            </option>
-          ))}
-        </select>
-        <button type="submit" disabled={pending} className={cx(btn.secondary, btn.small, "min-h-9")}>
-          {pending ? "Saving…" : "Set"}
-        </button>
+      <div className="mt-3">
+        <WeightInput label="New working weight" compact initial={prescribed ?? null} onChange={setLoad} />
       </div>
+      <button type="submit" disabled={pending || !load} className={cx(btn.secondary, btn.small, "mt-2 min-h-9")}>
+        {pending ? "Saving…" : "Set weight"}
+      </button>
       {msg && <p className={cx("mt-1.5 text-[12px]", msg.ok ? "text-good" : "text-bad")}>{msg.text}</p>}
     </form>
   );
@@ -157,6 +146,7 @@ function PrescribedForm({ patientId, prescribed, weights }: { patientId: string;
 export interface TremorPoint {
   sessionId: string;
   date: string;
+  name: string;
   /** Mean hold shake across the session's sets (mg). */
   mg: number;
   peakHz: number | null;
@@ -213,8 +203,8 @@ export function TremorCard({ points, byLoad, baseHref }: { points: TremorPoint[]
                   href={`${baseHref}/sessions/${p.sessionId}`}
                   className={cx("pressable mx-auto w-full max-w-8 rounded-t-md", LEVEL_BAR[tremorLevel(p.mg).level])}
                   style={{ height: `${Math.max(3, (p.mg / max) * 100)}%` }}
-                  title={`${p.date}: ${p.mg} mg${p.loadLabel ? ` at ${p.loadLabel}` : ""}${p.rhythmic && p.peakHz ? `, ${p.peakHz} Hz` : ""}`}
-                  aria-label={`${p.date}: ${p.mg} mg`}
+                  title={`${p.name}: ${p.mg} mg${p.loadLabel ? ` at ${p.loadLabel}` : ""}${p.rhythmic && p.peakHz ? `, ${p.peakHz} Hz` : ""}`}
+                  aria-label={`${p.name}: ${p.mg} mg`}
                 />
               </li>
             ))}

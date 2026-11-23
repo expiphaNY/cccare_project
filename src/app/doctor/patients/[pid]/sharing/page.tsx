@@ -16,7 +16,7 @@ import { AccessLog, SharesTable, WhoCanSee } from "@/components/transparency";
 import { ConsentToggles, DeleteProfile, ExportLinks } from "@/components/privacy";
 import { Card, CardHeader } from "@/components/ui";
 import { accessSummary, getPatientBundle } from "@/lib/data";
-import { fmtDateTime, fullName } from "@/lib/format";
+import { fullName, sessionName } from "@/lib/format";
 import { getStore } from "@/lib/store";
 
 export default async function DoctorSharing({ params }: PageProps<"/doctor/patients/[pid]/sharing">) {
@@ -41,7 +41,7 @@ export default async function DoctorSharing({ params }: PageProps<"/doctor/patie
                 patientName={fullName(p)}
                 triggerLabel="New link"
                 triggerVariant="secondary"
-                sessions={[...b.sessions].reverse().map((s) => ({ id: s.id, label: fmtDateTime(s.startedAt) }))}
+                sessions={[...b.sessions].reverse().map((s) => ({ id: s.id, label: sessionName(s) }))}
               />
             }
           />

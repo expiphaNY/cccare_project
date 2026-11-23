@@ -14,7 +14,7 @@ import { ChevronLeft, ChevronRight, CircleCheck, Download, Dumbbell, Home, MapPi
 import { METRICS, metricAvailable, type MetricKey } from "@/lib/analytics";
 import { clinicianById } from "@/lib/data";
 import { DEMO } from "@/lib/demo";
-import { fmtDate, fmtTime } from "@/lib/format";
+import { fmtDate, fmtTime, hasDefaultSessionName, sessionTitle } from "@/lib/format";
 import type { Patient, Recording, Session, SignalData } from "@/lib/types";
 import { EXERCISES, fmtLoad } from "@/lib/types";
 import { REP_STATUS } from "@/lib/rep-verify";
@@ -22,6 +22,7 @@ import { SignalViewer } from "./charts/SignalViewer";
 import { RepBars } from "./charts/Sparkline";
 import { NoteForm } from "./NoteForm";
 import { NoteList } from "./NoteList";
+import { SessionNameEditor } from "./SessionNameEditor";
 import { WrapUpButton } from "./agent/WrapUpButton";
 import { agentTarget } from "@/lib/agent/target";
 import { Badge, Card, CardHeader, DepthLadder, cx } from "./ui";
@@ -66,7 +67,14 @@ export function SessionDetail({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="display text-[24px] font-semibold">{fmtDate(session.startedAt, { weekday: "long" })}</h2>
+            {/* A session without a name of its own keeps the long date as its heading; a named one shows its name. */}
+            <SessionNameEditor
+              patientId={patient.id}
+              sessionId={session.id}
+              startedAt={session.startedAt}
+              heading={hasDefaultSessionName(session) ? fmtDate(session.startedAt, { weekday: "long" }) : sessionTitle(session)}
+              typed={hasDefaultSessionName(session) ? "" : sessionTitle(session)}
+            />
             <Badge>
               {session.location === "clinic" ? <MapPin className="size-3" aria-hidden /> : <Home className="size-3" aria-hidden />}
               {session.location === "clinic" ? `Clinic${clin ? ` · ${clin.name}` : ""}` : "Home exercise"}

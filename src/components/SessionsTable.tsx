@@ -3,12 +3,12 @@
 // =============================================================================
 //
 // WHAT THIS FILE DOES (high-level overview)
-//   A table of a patient's sessions (date and time, where, the exercises, sets and pain score). Each row opens the session.
+//   A table of a patient's sessions (name and start time, where, the exercises, sets and pain score). Each row opens the session.
 // =============================================================================
 
 import Link from "next/link";
 import { ChevronRight, Home, MapPin, NotebookPen } from "lucide-react";
-import { fmtDate, fmtTime } from "@/lib/format";
+import { fmtTime, sessionTitle } from "@/lib/format";
 import type { Patient, Recording, Session } from "@/lib/types";
 import { EXERCISES } from "@/lib/types";
 import { cx } from "./ui";
@@ -41,7 +41,7 @@ export function SessionsTable({
         <thead>
           <tr className="border-b border-line text-left text-[12px] text-ink-2">
             {!simple && <th className="px-5 py-3 font-medium sm:px-6">#</th>}
-            <th className={cx("py-3 font-medium", simple ? "px-5 sm:px-6" : "px-3")}>Date & time</th>
+            <th className={cx("py-3 font-medium", simple ? "px-5 sm:px-6" : "px-3")}>Session</th>
             <th className="px-3 py-3 font-medium">Where</th>
             {patient.exercises.map((ex) => (
               <th key={ex} className="px-3 py-3 font-medium">
@@ -59,7 +59,7 @@ export function SessionsTable({
               {!simple && <td className="px-5 py-3 text-ink-3 tabular sm:px-6">{sessions.length - i}</td>}
               <td className={cx("py-3", simple ? "px-5 sm:px-6" : "px-3")}>
                 <Link href={`${baseHref}/${s.id}`} className="after:absolute after:inset-0">
-                  <span className="block font-medium tabular">{fmtDate(s.startedAt)}</span>
+                  <span className="block font-medium tabular">{sessionTitle(s)}</span>
                   <span className="block text-[12px] text-ink-2">{fmtTime(s.startedAt)}</span>
                 </Link>
               </td>

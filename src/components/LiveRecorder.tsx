@@ -7,7 +7,8 @@
 //     1. CONNECT the sensor board over Bluetooth (or the back-up connections, or the demo sensor).
 //     2. WATCH the muscle envelope and the arm movement live, with live rep counts, a level meter,
 //        a shakiness number and warnings if the signal is silent or stuck at the sensor's maximum.
-//     3. RECORD one set at a time, choosing the weight lifted for each set.
+//     3. RECORD one set at a time, typing the weight lifted for each set (any number, in kg or lb).
+//        The session can be given a name; without one it is named by its date. The start time is always added.
 //     4. At the end of each set, put the readings on an even clock, count the reps with both
 //        sensors, compare them, and measure shakiness. These are the same calculations the server
 //        runs on save, so what is shown here matches what is stored.
@@ -76,7 +77,9 @@ import { DEMO, DEMO_MSG } from "@/lib/demo";
 import { LiveMotion } from "@/lib/motion";
 import { REP_STATUS, verifyReps } from "@/lib/rep-verify";
 import { LiveTremor, analyzeTremor, tremorLevel } from "@/lib/tremor";
-import { LB_PER_KG, VALUE_SCALES, fmtLoad, makeLoad, myowareGain, type ChannelKey, type Load, type RepCheck, type TremorMetrics, type ValueScale, type WeightSettings, type WeightUnit } from "@/lib/types";
+import { VALUE_SCALES, fmtLoad, myowareGain, type ChannelKey, type Load, type RepCheck, type TremorMetrics, type ValueScale } from "@/lib/types";
+import { SESSION_NAME_MAX, defaultSessionName } from "@/lib/format";
+import { WeightInput } from "./WeightInput";
 import { Sparkline } from "./charts/Sparkline";
 import { AXIS, UChart } from "./charts/UChart";
 import { Segmented } from "./Segmented";
@@ -186,7 +189,6 @@ export function LiveRecorder({
   exercises,
   defaultLocation,
   sessionHrefBase,
-  weights,
   prescribedLoad,
 }: {
   patientId: string;
@@ -194,13 +196,14 @@ export function LiveRecorder({
   exercises: { key: string; name: string; muscle: string }[];
   defaultLocation: "clinic" | "home";
   sessionHrefBase: string;
-  /** Clinic weight list (MongoDB settings). */
-  weights: WeightSettings;
-  /** Patient's prescribed working weight: the starting selection. */
+  /** Patient's prescribed working weight: the starting weight in the box. */
   prescribedLoad?: Load;
 }) {
   const router = useRouter();
-  const [load, setLoad] = useState<Load>(() => initialLoad(weights, prescribedLoad));
+  // The weight typed for the next set. null = the box is empty or not a valid weight, and a set cannot start.
+  const [load, setLoad] = useState<Load | null>(prescribedLoad ?? null);
+  // What the clinician typed as the session's name. Empty = use the date. The start time is added either way.
+  const [sessionNameText, setSessionNameText] = useState("");
   // Browser capability: "checking" during SSR, then the real answer on the client.
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const support = useSyncExternalStore<BluetoothSupport>(noSubscribe, () => sensorSupport(settings.connection), () => "checking");
@@ -228,10 +231,13 @@ export function LiveRecorder({
   const motionViewRef = useRef<"smooth" | "raw">("smooth");
 
   const conn = useRef<SensorConnection | null>(null);
-  const loadRef = useRef(load);
+  // The weight is fixed when a set starts (the box is locked while recording), so the saved set always
+  // carries the weight that was on screen when it began.
+  const loadRef = useRef<Load | null>(load);
   useEffect(() => {
     loadRef.current = load;
   }, [load]);
+  const setLoadRef = useRef<Load | null>(null);
   const statusRef = useRef<Status>("idle");
   const settingsRef = useRef(settings);
   const viewRef = useRef<LiveView>("envelope");
@@ -517,6 +523,9 @@ export function LiveRecorder({
    */
   const finishSet = useCallback((reason?: string) => {
     const r = rec.current;
+    // The weight that was typed when this set started. startSet() never begins a set without one.
+    const setWeight = setLoadRef.current;
+    if (!setWeight) return;
     const dur = r.t.length > 1 ? (r.t[r.t.length - 1] - r.t[0]) / 1000 : 0;
     if (dur < MIN_SET_S || r.t.length < 10) {
       setNotice({ tone: "warn", text: `${reason ? reason + " " : ""}That set was under ${MIN_SET_S} seconds, so it wasn't kept.` });
@@ -571,7 +580,7 @@ export function LiveRecorder({
         peak,
         reps,
         preview,
-        load: loadRef.current,
+        load: setWeight,
         check,
         tremor,
       },
@@ -684,6 +693,9 @@ export function LiveRecorder({
   /* ---------- sets ---------- */
 
   const startSet = () => {
+    // A set needs a weight (0 is fine and means arm only), so an empty or invalid box blocks the start.
+    if (!loadRef.current) return;
+    setLoadRef.current = loadRef.current;
     rec.current = { ...emptyRec(), start: performance.now(), startIso: new Date().toISOString() };
     setNotice(null);
     statusRef.current = "recording";
@@ -723,6 +735,8 @@ export function LiveRecorder({
         body: JSON.stringify({
           exercise,
           location,
+          // What was typed; the server adds the start time (or uses the date) so every session is named the same way.
+          sessionName: sessionNameText.trim() || undefined,
           painScore: pain === "" ? undefined : Number(pain),
           deviceName,
           transport,
@@ -968,7 +982,37 @@ export function LiveRecorder({
               </Field>
             </div>
             <div className="border-t border-line px-5 py-4 sm:px-6">
-              <WeightPicker weights={weights} value={load} onChange={setLoad} prescribed={prescribedLoad} disabled={recording} />
+              <Field
+                label="Session name (optional)"
+                hint={`Saved as “${defaultSessionName(sets[0]?.startedAt ?? new Date().toISOString(), sessionNameText)}”. Leave it empty to use the date. The start time is always added.`}
+              >
+                <input
+                  type="text"
+                  className="min-h-10 w-full rounded-xl border border-line-strong bg-white px-3 text-sm"
+                  value={sessionNameText}
+                  maxLength={SESSION_NAME_MAX}
+                  onChange={(e) => setSessionNameText(e.target.value)}
+                  placeholder="For example: Week 3 · elbow strength"
+                  disabled={status === "saving"}
+                />
+              </Field>
+            </div>
+            <div className="border-t border-line px-5 py-4 sm:px-6">
+              <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink">
+                  <Dumbbell className="size-4 text-brand" aria-hidden /> Weight for the next set
+                </span>
+                <span className="ml-auto text-[12px] text-ink-3">Change between sets. Each set saves its own weight.</span>
+              </div>
+              <WeightInput
+                label="Weight for the next set"
+                compact
+                initial={prescribedLoad ?? null}
+                prescribed={prescribedLoad}
+                lastUsed={sets.at(-1)?.load}
+                onChange={setLoad}
+                disabled={recording}
+              />
             </div>
           </Card>
 
@@ -1115,8 +1159,8 @@ export function LiveRecorder({
                 </>
               ) : (
                 <>
-                  <button type="button" className={cx(btn.primary, "min-h-11 px-5")} onClick={startSet} disabled={status === "saving" || readout.stale}>
-                    <Play className="size-4 fill-current" aria-hidden /> Start set {sets.length + 1} · {fmtLoad(load)}
+                  <button type="button" className={cx(btn.primary, "min-h-11 px-5")} onClick={startSet} disabled={status === "saving" || readout.stale || !load}>
+                    <Play className="size-4 fill-current" aria-hidden /> Start set {sets.length + 1} · {load ? fmtLoad(load) : "enter a weight"}
                   </button>
                   <p className="text-[13px] text-ink-2">
                     Start, have the patient perform the {ex?.name.toLowerCase() ?? "set"}, then stop. Starting with the arm relaxed at the bottom helps the
@@ -1433,92 +1477,6 @@ function LiveStat({ label, value, live, match }: { label: string; value: string;
         {match === true && <CircleCheck className="size-4 text-good" aria-label="matches EMG" />}
         {match === false && <TriangleAlert className="size-4 text-warn" aria-label="differs from EMG" />}
       </dd>
-    </div>
-  );
-}
-
-/** Starting weight: the patient's prescribed load, else nothing added in the clinic's default unit. */
-function initialLoad(w: WeightSettings, prescribed?: Load): Load {
-  if (prescribed) {
-    if (prescribed.unit === w.unit) return prescribed;
-    const v = w.unit === "kg" ? prescribed.kg : prescribed.kg * LB_PER_KG;
-    const near = w.options.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a), w.options[0] ?? 0);
-    return makeLoad(near, w.unit);
-  }
-  return makeLoad(w.options.find((x) => x > 0) ?? w.options[0] ?? 0, w.unit);
-}
-
-/** Weight chips from the clinic list, plus a custom value. */
-function WeightPicker({
-  weights,
-  value,
-  onChange,
-  prescribed,
-  disabled,
-}: {
-  weights: WeightSettings;
-  value: Load;
-  onChange: (l: Load) => void;
-  prescribed?: Load;
-  disabled?: boolean;
-}) {
-  const unit: WeightUnit = weights.unit;
-  const isOption = value.unit === unit && weights.options.includes(value.value);
-  const [custom, setCustom] = useState(isOption ? "" : String(value.value));
-  return (
-    <div>
-      <div className="mb-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink">
-          <Dumbbell className="size-4 text-brand" aria-hidden /> Weight for the next set
-        </span>
-        {prescribed && <span className="text-[12px] text-ink-3">Prescribed: {fmtLoad(prescribed)}</span>}
-        <span className="ml-auto text-[12px] text-ink-3">Change between sets. Each set saves its own weight.</span>
-      </div>
-      <div className="-mx-1 flex flex-wrap gap-1.5" role="radiogroup" aria-label="Weight">
-        {weights.options.map((w) => {
-          const active = value.unit === unit && value.value === w;
-          return (
-            <button
-              key={w}
-              type="button"
-              role="radio"
-              aria-checked={active}
-              disabled={disabled}
-              onClick={() => {
-                setCustom("");
-                onChange(makeLoad(w, unit));
-              }}
-              className={cx(
-                "pressable min-h-9 min-w-12 rounded-full border px-3 text-[13px] font-medium tabular disabled:opacity-50",
-                active ? "border-brand bg-brand text-white" : "border-line-strong bg-white text-ink hover:border-brand/50 hover:text-brand",
-              )}
-            >
-              {w === 0 ? "None" : `${w} ${unit}`}
-            </button>
-          );
-        })}
-        <label className={cx("inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-[13px]", !isOption ? "border-brand ring-2 ring-brand/15" : "border-line-strong")}>
-          <span className="text-ink-2">Other</span>
-          <input
-            type="number"
-            min={0}
-            max={200}
-            step={0.25}
-            inputMode="decimal"
-            value={custom}
-            disabled={disabled}
-            placeholder="—"
-            onChange={(e) => {
-              setCustom(e.target.value);
-              const v = Number(e.target.value);
-              if (e.target.value !== "" && Number.isFinite(v) && v >= 0 && v <= 200) onChange(makeLoad(v, unit));
-            }}
-            className="w-14 bg-transparent text-right tabular outline-none"
-            aria-label={`Custom weight in ${unit}`}
-          />
-          <span className="text-ink-3">{unit}</span>
-        </label>
-      </div>
     </div>
   );
 }

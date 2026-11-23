@@ -23,11 +23,17 @@ import type {
   Share,
   Side,
 } from "./types";
-import { DEFAULT_WEIGHTS, EXERCISES, makeLoad } from "./types";
+import { EXERCISES, makeLoad } from "./types";
 
-/** Snaps a kg value to the nearest default dumbbell. */
+/**
+ * The dumbbell sizes (kg) the DEMO data is built from. This only shapes the made-up seed history so it looks
+ * like real dumbbells; it is not a list the recorder offers (the clinician types any weight they like).
+ */
+const SEED_DUMBBELLS_KG = [0, 0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20];
+
+/** Snaps a kg value to the nearest demo dumbbell. */
 function snapKg(kg: number) {
-  return DEFAULT_WEIGHTS.options.reduce((a, b) => (Math.abs(b - kg) < Math.abs(a - kg) ? b : a), DEFAULT_WEIGHTS.options[0]);
+  return SEED_DUMBBELLS_KG.reduce((a, b) => (Math.abs(b - kg) < Math.abs(a - kg) ? b : a), SEED_DUMBBELLS_KG[0]);
 }
 
 /**

@@ -11,7 +11,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf
 import { metricAvailable, summarize } from "../analytics";
 import type { PatientBundle } from "../data";
 import { clinicianById } from "../data";
-import { ageFrom, fmtDate, fmtDateTime, fmtTime, fullName } from "../format";
+import { ageFrom, fmtDate, fmtDateTime, fmtTime, fullName, sessionName } from "../format";
 import type { AuditEvent, Recording, Share, SignalData } from "../types";
 import { EXERCISES } from "../types";
 
@@ -272,13 +272,17 @@ export async function buildPdf(
   for (const [i, s] of sums.entries()) {
     const [a, z] = await Promise.all([getSignal(s.baselineRecordingId), getSignal(s.latestRecordingId)]);
     if (!a || !z) continue;
+    const nameOfSession = (r: Recording) => {
+      const sess = b.sessions.find((x) => x.id === r.sessionId);
+      return sess ? sessionName(sess) : fmtDateTime(r.recordedAt);
+    };
     const ra = b.recordings.find((r) => r.id === s.baselineRecordingId)!;
     const rz = b.recordings.find((r) => r.id === s.latestRecordingId)!;
     w.heading(`${EXERCISES[s.exercise].name}: typical repetition, baseline vs latest`, 170);
     w.chart(
       [
-        { pts: typicalRep(a), color: SERIES[0], label: `${fmtDate(ra.recordedAt)} (baseline)` },
-        { pts: typicalRep(z), color: SERIES[1], label: `${fmtDate(rz.recordedAt)} (latest)` },
+        { pts: typicalRep(a), color: SERIES[0], label: `${nameOfSession(ra)} (baseline)` },
+        { pts: typicalRep(z), color: SERIES[1], label: `${nameOfSession(rz)} (latest)` },
       ],
       { h: 120, yLabel: "Envelope (mV), reps aligned at onset & averaged", xFmt: (x) => `${x.toFixed(1)} s` },
     );
@@ -321,7 +325,7 @@ export async function buildPdf(
   const notes = b.sessions.filter((s) => s.notes);
   if (notes.length) {
     w.heading("Clinical notes");
-    for (const s of notes) w.text(`${fmtDate(s.startedAt)}: ${s.notes!.replace(/\n/g, " / ")}`, { size: 9, gap: 3 });
+    for (const s of notes) w.text(`${sessionName(s)}: ${s.notes!.replace(/\n/g, " / ")}`, { size: 9, gap: 3 });
   }
 
   // Provenance & privacy

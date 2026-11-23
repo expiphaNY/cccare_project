@@ -93,39 +93,39 @@ export function fmtLoad(l?: Load | null) {
   return l.value === 0 ? "No weight" : `${l.value} ${l.unit}`;
 }
 
-/** Clinic-wide list of weights the recorder offers (MongoDB: settings/_id "weights"). */
-export interface WeightSettings {
-  unit: WeightUnit;
-  /** Available weights in `unit`, ascending. 0 = no added weight. */
-  options: number[];
-  updatedAt: string;
-  updatedBy?: string;
+/** The heaviest weight the app accepts (in whichever unit was typed). A typo guard, not a clinical limit. */
+export const MAX_LOAD = 200;
+
+/** True when a typed weight is a real number the app will accept (0 means "no added weight"). */
+export function isValidLoadValue(v: number) {
+  return Number.isFinite(v) && v >= 0 && v <= MAX_LOAD;
 }
 
-export const DEFAULT_WEIGHTS: WeightSettings = {
-  unit: "kg",
-  options: [0, 0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20],
-  updatedAt: "2026-01-01T00:00:00.000Z",
-};
+/** Converts a weight between units, rounded to 2 decimals. */
+export function convertWeight(value: number, from: WeightUnit, to: WeightUnit) {
+  if (from === to) return value;
+  return Math.round((from === "kg" ? value * LB_PER_KG : value / LB_PER_KG) * 100) / 100;
+}
 
 /**
- * Fills in whatever an older saved weight setting lacks. Settings saved before the clinic
- * list existed hold only a unit, so without this the recorder would find no weight choices.
+ * How big one "step up" or "step down" is for the assistant's weight advice. Dumbbells come in
+ * finer steps when they are light, so the step grows with the weight. The weight itself is
+ * whatever the clinician typed; nothing is chosen from a fixed list.
  */
-export function withWeightDefaults(w?: Partial<WeightSettings> | null): WeightSettings {
-  const options = Array.isArray(w?.options) ? w.options.filter((x) => Number.isFinite(x)) : [];
-  return {
-    ...DEFAULT_WEIGHTS,
-    ...w,
-    unit: w?.unit === "lb" ? "lb" : "kg",
-    options: options.length ? options : DEFAULT_WEIGHTS.options,
-  };
+export function loadStep(value: number, unit: WeightUnit) {
+  if (unit === "kg") return value < 5 ? 0.5 : value < 10 ? 1 : 2;
+  return value < 10 ? 1 : value < 25 ? 2.5 : 5;
 }
 
 export interface Session {
   id: string;
   patientId: string;
   startedAt: string;
+  /**
+   * The session's name, time included, e.g. "Nov 22, 2026 · 4:35 PM" or "Elbow rehab · 4:35 PM".
+   * Missing on older sessions: show them with sessionName() in lib/format.ts.
+   */
+  name?: string;
   location: "clinic" | "home";
   clinicianId?: string;
   notes?: string;
@@ -389,6 +389,7 @@ export type AuditAction =
   | "suggestion_approved"
   | "suggestion_rejected"
   | "load_prescribed"
+  | "session_renamed"
   | "settings_updated";
 
 export interface AuditEvent {

@@ -12,7 +12,7 @@ import path from "node:path";
 import { summarize } from "../analytics";
 import type { PatientBundle } from "../data";
 import { clinicianById } from "../data";
-import { ageFrom, fmtDate, fmtDateTime, fullName } from "../format";
+import { ageFrom, fmtDate, fmtDateTime, fullName, sessionName } from "../format";
 import { resampleMean } from "../signal";
 import type { Share, SignalData } from "../types";
 import { EXERCISES } from "../types";
@@ -58,7 +58,7 @@ export async function buildHtml(
   }
   const data = {
     exercises: p.exercises.map((k) => ({ key: k, ...EXERCISES[k] })),
-    sessions: b.sessions.map((s) => ({ id: s.id, d: s.startedAt, loc: s.location, pain: s.painScore ?? null, notes: s.notes ?? null })),
+    sessions: b.sessions.map((s) => ({ id: s.id, d: s.startedAt, n: sessionName(s), loc: s.location, pain: s.painScore ?? null, notes: s.notes ?? null })),
     recs,
   };
   const { js, css } = uplotAssets();
@@ -141,6 +141,7 @@ const C = ["#2a78d6","#eb6834","#1baf7a","#eda100","#e87ba4","#008300"];
 const AX = {stroke:"#5c6b82",grid:{stroke:"#eef2f7"},ticks:{stroke:"#e1e8f1"},font:"12px -apple-system,system-ui,sans-serif"};
 const fmtD = (iso, y) => new Date(iso).toLocaleDateString("en-CA",{month:"short",day:"numeric",...(y?{year:"numeric"}:{})});
 const sessDate = Object.fromEntries(D.sessions.map(s => [s.id, s.d]));
+const sessName = Object.fromEntries(D.sessions.map(s => [s.id, s.n]));
 function tipPlugin(fmt){let t;return{hooks:{init:u=>{t=document.createElement("div");t.className="tip";u.over.appendChild(t);u.over.addEventListener("mouseleave",()=>t.style.display="none")},setCursor:u=>{const {left,top,idx}=u.cursor;if(idx==null||left<0){t.style.display="none";return}const h=fmt(u,idx);if(!h){t.style.display="none";return}t.innerHTML=h;t.style.display="block";const w=t.offsetWidth;t.style.left=(left+14+w>u.over.clientWidth?left-w-14:left+14)+"px";t.style.top=Math.max(0,top-10)+"px"}}}}
 function best(ex){const by={};for(const r of D.recs){if(r.ex!==ex)continue;if(!by[r.s]||r.m.peak>by[r.s].m.peak)by[r.s]=r}return Object.values(by).sort((a,b)=>sessDate[a.s].localeCompare(sessDate[b.s]))}
 function mk(el,opts,data){const w=el.clientWidth||900;el.innerHTML="";return new uPlot({...opts,width:w,height:opts.height||280},data,el)}
@@ -160,15 +161,15 @@ function renderCompare(){
   seg(document.getElementById("exSeg"),D.exercises.map(e=>[e.key,e.name]),ex,v=>{ex=v;sel=[];init();});
   seg(document.getElementById("modeSeg"),[["rep","Average rep"],["set","Whole set"]],mode,v=>{mode=v;renderCompare()});
   const list=best(ex);const dates=document.getElementById("dates");dates.innerHTML="";
-  for(const r of list){const s=sel.find(x=>x.id===r.id);const b=document.createElement("button");b.className="chip";b.setAttribute("aria-pressed",!!s);if(s)b.style.background=C[s.slot];b.textContent=fmtD(sessDate[r.s])+" · "+r.m.peak.toFixed(2);b.onclick=()=>{if(s)sel=sel.filter(x=>x.id!==r.id);else if(sel.length<6)sel.push({id:r.id,slot:slot()});renderCompare()};dates.appendChild(b)}
+  for(const r of list){const s=sel.find(x=>x.id===r.id);const b=document.createElement("button");b.className="chip";b.setAttribute("aria-pressed",!!s);if(s)b.style.background=C[s.slot];b.textContent=sessName[r.s]+" · "+r.m.peak.toFixed(2);b.onclick=()=>{if(s)sel=sel.filter(x=>x.id!==r.id);else if(sel.length<6)sel.push({id:r.id,slot:slot()});renderCompare()};dates.appendChild(b)}
   const chosen=sel.map(s=>({...s,r:D.recs.find(x=>x.id===s.id)})).sort((a,b)=>a.r.d.localeCompare(b.r.d));
   const el=document.getElementById("overlay");
   if(!chosen.length){el.innerHTML="<p class='muted' style='padding:40px;text-align:center;background:var(--canvas);border-radius:12px'>Select dates above to layer them.</p>";document.getElementById("cmpTable").innerHTML="";return}
   const curves=chosen.map(c=>mode==="rep"?avgRep(c.r):c.r.env);const dt=chosen[0].r.dt;const n=Math.max(...curves.map(c=>c.length));const t0=mode==="rep"?-.5:0;
   const x=Array.from({length:n},(_,i)=>+(t0+i*dt).toFixed(3));
-  mk(el,{height:300,scales:{x:{time:false}},legend:{show:false},cursor:{y:false,points:{show:false}},axes:[{...AX,values:(u,v)=>v.map(s=>s.toFixed(1)+" s")},{...AX,size:50,label:"mV"}],series:[{},...chosen.map(c=>({stroke:C[c.slot],width:2}))],plugins:[tipPlugin((u,i)=>u.data[0][i].toFixed(2)+" s"+chosen.map((c,k)=>u.data[k+1][i]==null?"":"<div><span style='color:"+C[c.slot]+"'>●</span> "+fmtD(c.r.d)+": <b>"+u.data[k+1][i].toFixed(3)+" mV</b></div>").join(""))]},[x,...curves.map(c=>x.map((_,i)=>c[i]??null))]);
+  mk(el,{height:300,scales:{x:{time:false}},legend:{show:false},cursor:{y:false,points:{show:false}},axes:[{...AX,values:(u,v)=>v.map(s=>s.toFixed(1)+" s")},{...AX,size:50,label:"mV"}],series:[{},...chosen.map(c=>({stroke:C[c.slot],width:2}))],plugins:[tipPlugin((u,i)=>u.data[0][i].toFixed(2)+" s"+chosen.map((c,k)=>u.data[k+1][i]==null?"":"<div><span style='color:"+C[c.slot]+"'>●</span> "+sessName[c.r.s]+": <b>"+u.data[k+1][i].toFixed(3)+" mV</b></div>").join(""))]},[x,...curves.map(c=>x.map((_,i)=>c[i]??null))]);
   const f=chosen[0].r.m.peak;
-  document.getElementById("cmpTable").innerHTML="<table><tr><th>Date</th><th class=n>Peak</th><th class=n>vs first</th><th class=n>Mean</th><th class=n>MDF</th><th class=n>Fatigue</th></tr>"+chosen.map((c,i)=>{const d=(c.r.m.peak-f)/f*100;return "<tr><td><span style='color:"+C[c.slot]+"'>●</span> "+fmtD(c.r.d,true)+" · set "+c.r.set+"</td><td class=n>"+c.r.m.peak.toFixed(3)+" mV</td><td class='n "+(i===0?"":d>=0?"up":"down")+"'>"+(i===0?"reference":(d>=0?"+":"")+d.toFixed(1)+"%")+"</td><td class=n>"+c.r.m.mean.toFixed(3)+"</td><td class=n>"+c.r.m.mdf.toFixed(0)+" Hz</td><td class=n>"+c.r.m.fat.toFixed(0)+"%</td></tr>"}).join("")+"</table>";
+  document.getElementById("cmpTable").innerHTML="<table><tr><th>Date</th><th class=n>Peak</th><th class=n>vs first</th><th class=n>Mean</th><th class=n>MDF</th><th class=n>Fatigue</th></tr>"+chosen.map((c,i)=>{const d=(c.r.m.peak-f)/f*100;return "<tr><td><span style='color:"+C[c.slot]+"'>●</span> "+sessName[c.r.s]+" · set "+c.r.set+"</td><td class=n>"+c.r.m.peak.toFixed(3)+" mV</td><td class='n "+(i===0?"":d>=0?"up":"down")+"'>"+(i===0?"reference":(d>=0?"+":"")+d.toFixed(1)+"%")+"</td><td class=n>"+c.r.m.mean.toFixed(3)+"</td><td class=n>"+c.r.m.mdf.toFixed(0)+" Hz</td><td class=n>"+c.r.m.fat.toFixed(0)+"%</td></tr>"}).join("")+"</table>";
 }
 function init(){const l=best(ex);sel=[];if(l.length){sel.push({id:l[0].id,slot:0});if(l.length>1)sel.push({id:l[l.length-1].id,slot:1})}renderCompare()}
 init();

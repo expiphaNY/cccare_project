@@ -25,9 +25,10 @@ export default async function DoctorCompare({ params, searchParams }: PageProps<
   if (DEMO)
     return (
       <CompareFromQuery
-        recordings={compareRecordings(b.recordings)}
+        recordings={compareRecordings(b.recordings, b.sessions)}
         exercises={exerciseList(b.patient)}
         access="as=clinician"
+        patientId={pid}
         audience="clinician"
         defaultExercise={def.exercise}
         defaultIds={def.ids}
@@ -36,9 +37,10 @@ export default async function DoctorCompare({ params, searchParams }: PageProps<
   return (
     <CompareTool
       key={`${ex}|${ids.join(",")}`}
-      recordings={compareRecordings(b.recordings)}
+      recordings={compareRecordings(b.recordings, b.sessions)}
       exercises={exerciseList(b.patient)}
       access="as=clinician"
+      patientId={pid}
       audience="clinician"
       initialExercise={ex}
       initialIds={ids}

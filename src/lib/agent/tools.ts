@@ -15,7 +15,7 @@ import { shouldLog } from "../access";
 import { clinicianActor, logAccess } from "../data";
 import { fullName } from "../format";
 import { getStore } from "../store";
-import { LB_PER_KG, fmtLoad, makeLoad, type Actor, type Load, type Recording, type Session } from "../types";
+import { fmtLoad, isValidLoadValue, loadStep, makeLoad, MAX_LOAD, type Actor, type Load, type Recording, type Session } from "../types";
 import { ungrounded } from "./grade";
 import { REP_STATUS } from "../rep-verify";
 import { tremorLevel } from "../tremor";
@@ -154,7 +154,7 @@ const reviewPatient: ToolDef = {
     if (!b) return fail("Patient not found.", { patients: all.map((x) => fullName(x.patient)) });
     await logRead(b, "a patient review");
     const store = await getStore();
-    const [weights, drafts] = await Promise.all([store.getWeightSettings(), store.listSuggestions(b.patient.id)]);
+    const drafts = await store.listSuggestions(b.patient.id);
     const p = b.patient;
     const hist = loadHistory(b);
     const peak = metricTrend(b, "peakEnvelope");
@@ -168,7 +168,7 @@ const reviewPatient: ToolDef = {
         weight: {
           prescribed: p.prescribedLoad ? fmtLoad(p.prescribedLoad) : null,
           recentSessions: hist.slice(-5).map((h) => ({ date: h.date, load: h.load, verifiedReps: h.verifiedReps, peakMv: h.peakMv, fatiguePct: h.meanFatiguePct, shakeMg: h.shakeMg, pain: h.pain })),
-          recommendation: hist.length ? { ...recommendLoad(b, hist, weights), basedOnSession: hist.at(-1)!.date } : null,
+          recommendation: hist.length ? { ...recommendLoad(b, hist), basedOnSession: hist.at(-1)!.date } : null,
         },
         repQuality: { ...repSummary(b.recordings), recentDisagreements: b.recordings.filter((r) => r.repCheck && (r.repCheck.status === "partial" || r.repCheck.status === "mismatch")).slice(-3).map((r) => ({ date: r.recordedAt.slice(0, 10), set: r.setNumber, ...repDetail(r), href: `${sessionHref(p.id, r.sessionId)}?set=${r.id}` })) },
         shakiness: tremorSummary(b),
@@ -193,8 +193,7 @@ const reviewSession: ToolDef = {
     const sess = resolveSession(b, s(a.session) || "current", parseView(ctx).sessionId) ?? resolveSession(b, "latest");
     if (!sess) return fail("Session not found.", { sessions: b.sessions.slice(-8).map((x) => ({ id: x.id, date: x.startedAt.slice(0, 10) })) });
     await logRead(b, "a session review");
-    const weights = await (await getStore()).getWeightSettings();
-    return { result: sessionReview(b, sess, weights) };
+    return { result: sessionReview(b, sess) };
   },
 };
 
@@ -206,7 +205,7 @@ const triageCaseload: ToolDef = {
   run: async () => {
     const all = await loadAll();
     const store = await getStore();
-    const [weights, drafts] = await Promise.all([store.getWeightSettings(), store.listSuggestions()]);
+    const drafts = await store.listSuggestions();
     type Entry = { name: string; href: string; why: string };
     const lists: Record<string, Entry[]> = { readyToMoveUp: [], shouldDropBack: [], activationDeclining: [], repsNotVerified: [], shakierWithWeight: [], inactive7Days: [] };
     for (const b of all) {
@@ -214,7 +213,7 @@ const triageCaseload: ToolDef = {
       const e = (why: string): Entry => ({ name: row.name, href: row.href, why });
       const hist = loadHistory(b);
       if (hist.length) {
-        const rec = recommendLoad(b, hist, weights);
+        const rec = recommendLoad(b, hist);
         if (rec.action === "increase") lists.readyToMoveUp.push(e(`${rec.from} → ${rec.to}: ${rec.decidedBy}`));
         if (rec.action === "decrease") lists.shouldDropBack.push(e(`${rec.from} → ${rec.to}: ${rec.decidedBy}`));
       }
@@ -243,12 +242,12 @@ const clinicianTools: ToolDef[] = [
   {
     name: "propose_load_change",
     description:
-      "Creates a DRAFT change of the patient's prescribed working weight. Nothing changes until the clinician approves it in Drafts. Use after review_session or review_patient recommends a change, or when the clinician asks you to set a weight. The value must be in the clinic's weight list. Never say the weight has been changed: say a draft is waiting for approval.",
+      "Creates a DRAFT change of the patient's prescribed working weight. Nothing changes until the clinician approves it in Drafts. Use after review_session or review_patient recommends a change, or when the clinician asks you to set a weight. Any weight is allowed: use the same unit the patient's recent sets used unless the clinician says otherwise. Never say the weight has been changed: say a draft is waiting for approval.",
     parameters: obj(
       {
         patient: str("Patient id or name. Defaults to the patient on screen."),
         value: num("New working weight, in the given unit. 0 = no added weight."),
-        unit: str("kg or lb. Defaults to the clinic's unit.", { enum: ["kg", "lb"] }),
+        unit: str("kg or lb. Defaults to the unit the patient's weights were last recorded in.", { enum: ["kg", "lb"] }),
         rationale: str("The data behind the change: loads, verified reps, fatigue, pain, ROM. 1–3 sentences with numbers from tool results."),
       },
       ["value", "rationale"],
@@ -258,11 +257,10 @@ const clinicianTools: ToolDef[] = [
       const { b } = await patientOrFail(a.patient, ctx);
       if (!b) return fail("Patient not found.");
       const v = n(a.value);
-      if (v == null || !Number.isFinite(v) || v < 0 || v > 200) return fail("value must be a weight between 0 and 200.");
+      if (v == null || !isValidLoadValue(v)) return fail(`value must be a weight between 0 and ${MAX_LOAD}.`);
       const store = await getStore();
-      const weights = await store.getWeightSettings();
-      const unit = a.unit === "lb" || a.unit === "kg" ? a.unit : weights.unit;
-      if (unit === weights.unit && !weights.options.includes(v)) return fail(`${v} ${unit} is not in the clinic's weight list.`, { options: weights.options, unit: weights.unit });
+      // No fixed list of weights: any value is accepted, in the unit asked for, else the unit the patient was last recorded in.
+      const unit = a.unit === "lb" || a.unit === "kg" ? a.unit : (loadHistory(b).at(-1)?.loadUnit ?? b.patient.prescribedLoad?.unit ?? "kg");
       const load = makeLoad(v, unit);
       const from = b.patient.prescribedLoad ? fmtLoad(b.patient.prescribedLoad) : "not set";
       const draft = {
@@ -306,8 +304,7 @@ const clinicianTools: ToolDef[] = [
       const note = s(a.note).trim().slice(0, 1500);
       if (!note) return fail("note is empty.");
       // Grounding check: every number in the note must appear in this session's review.
-      const weights = await (await getStore()).getWeightSettings();
-      const facts = JSON.stringify(sessionReview(b, sess, weights));
+      const facts = JSON.stringify(sessionReview(b, sess));
       const bad = ungrounded(note, [facts]);
       if (bad.length)
         return fail(`These numbers are not in the session data: ${bad.join(", ")}. Rewrite the note using only numbers from review_session, then call draft_session_note again.`);
@@ -480,6 +477,8 @@ function loadHistory(b: Bundle) {
         date: x.startedAt.slice(0, 10),
         sessionId: x.id,
         load: fmtLoad(atTop[0].load),
+        loadValue: atTop[0].load!.value,
+        loadUnit: atTop[0].load!.unit,
         loadKg: top,
         sets: atTop.length,
         verifiedReps: reps,
@@ -504,14 +503,14 @@ function loadHistory(b: Bundle) {
  * Deterministic progression rules. Order matters: safety first (pain), then
  * data trust, then performance at the current weight.
  */
-function recommendLoad(b: Bundle, hist: ReturnType<typeof loadHistory>, weights: { unit: "kg" | "lb"; options: number[] }) {
+function recommendLoad(b: Bundle, hist: ReturnType<typeof loadHistory>) {
   const last = hist[hist.length - 1];
   const prev = hist[hist.length - 2];
-  const toUnit = (kg: number) => (weights.unit === "kg" ? kg : kg * LB_PER_KG);
-  const opts = [...weights.options].sort((x, y) => x - y);
-  const cur = toUnit(last.loadKg);
-  const idx = opts.reduce((best, v, i) => (Math.abs(v - cur) < Math.abs(opts[best] - cur) ? i : best), 0);
-  const step = (d: number): Load => makeLoad(opts[Math.max(0, Math.min(opts.length - 1, idx + d))], weights.unit);
+  // Advice is given in the unit the clinician used for the latest weight, and the step is one small
+  // dumbbell increment from it (see loadStep in types.ts). There is no fixed list of weights.
+  const weights = { unit: last.loadUnit };
+  const cur = last.loadValue;
+  const step = (d: number): Load => makeLoad(d > 0 ? cur + loadStep(cur, weights.unit) : Math.max(0, cur - loadStep(Math.max(0, cur - 0.01), weights.unit)), weights.unit);
   const rules: { rule: string; value: string; passed: boolean }[] = [];
   const add = (rule: string, value: string, passed: boolean) => rules.push({ rule, value, passed });
 
@@ -546,18 +545,18 @@ function recommendLoad(b: Bundle, hist: ReturnType<typeof loadHistory>, weights:
   const sameTwice = !!prev && prev.loadKg === last.loadKg && prev.minReps >= 6;
   add("Same weight managed in the previous session too", prev ? `${prev.load}, min ${prev.minReps} reps` : "no previous session", sameTwice);
   if (!painOk || !trusted)
-    return { action: "hold", from: last.load, to: last.load, toValue: toUnit(last.loadKg), unit: weights.unit, decidedBy: !painOk ? "Pain 4/10: hold the weight." : "Reps not verified by movement: recheck before progressing.", rules };
+    return { action: "hold", from: last.load, to: last.load, toValue: cur, unit: weights.unit, decidedBy: !painOk ? "Pain 4/10: hold the weight." : "Reps not verified by movement: recheck before progressing.", rules };
   if (!repsOk || !fatigueOk || !romOk || !shakeOk) {
     const drop = last.minReps < 4 || (last.meanFatiguePct ?? 0) < -35;
-    return { action: drop ? "decrease" : "hold", from: last.load, to: drop ? fmtLoad(step(-1)) : last.load, toValue: drop ? step(-1).value : toUnit(last.loadKg), unit: weights.unit, decidedBy: drop ? "Fewer than 4 verified reps or severe fatigue: reduce one step." : (!shakeOk && repsOk && fatigueOk && romOk ? "Shakier at this weight than the lighter one: hold until control improves." : "Not yet managing the current weight cleanly: hold."), rules };
+    return { action: drop ? "decrease" : "hold", from: last.load, to: drop ? fmtLoad(step(-1)) : last.load, toValue: drop ? step(-1).value : cur, unit: weights.unit, decidedBy: drop ? "Fewer than 4 verified reps or severe fatigue: reduce one step." : (!shakeOk && repsOk && fatigueOk && romOk ? "Shakier at this weight than the lighter one: hold until control improves." : "Not yet managing the current weight cleanly: hold."), rules };
   }
-  if (sameTwice && idx < opts.length - 1)
+  if (sameTwice)
     return { action: "increase", from: last.load, to: fmtLoad(step(1)), toValue: step(1).value, unit: weights.unit, decidedBy: "All checks passed at the same weight for two sessions: go up one step.", rules };
-  return { action: "hold", from: last.load, to: last.load, toValue: toUnit(last.loadKg), unit: weights.unit, decidedBy: idx >= opts.length - 1 ? "Already at the heaviest weight in the clinic list." : "Checks passed once: confirm at this weight for one more session before progressing.", rules };
+  return { action: "hold", from: last.load, to: last.load, toValue: cur, unit: weights.unit, decidedBy: "Checks passed once: confirm at this weight for one more session before progressing.", rules };
 }
 
 /** The full review of one session (also the grounding source for a drafted note). */
-export function sessionReview(b: Bundle, sess: Session, weights: { unit: "kg" | "lb"; options: number[] }) {
+export function sessionReview(b: Bundle, sess: Session) {
   const recs = b.recordings.filter((r) => r.sessionId === sess.id);
   const i = b.sessions.findIndex((x) => x.id === sess.id);
   const prev = b.sessions[i - 1];
@@ -589,6 +588,6 @@ export function sessionReview(b: Bundle, sess: Session, weights: { unit: "kg" | 
       ? { date: prev.startedAt.slice(0, 10), strongestPeakChangePct: bNow && bPrev ? r2(((bNow - bPrev) / bPrev) * 100, 0) : null, previousLoad: fmtLoad(prevRecs.find((r) => r.load)?.load), previousVerifiedReps: prevRecs.reduce((t, r) => t + (r.repCheck?.verifiedReps ?? 0), 0) }
       : null,
     // Based on the latest session that recorded weights (may be an earlier one).
-    nextWeight: isLatest && hist.length ? { ...recommendLoad(b, hist, weights), basedOnSession: hist.at(-1)!.date } : null,
+    nextWeight: isLatest && hist.length ? { ...recommendLoad(b, hist), basedOnSession: hist.at(-1)!.date } : null,
   };
 }

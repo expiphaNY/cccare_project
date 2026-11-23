@@ -25,8 +25,8 @@ import { clinicianActor, logAccess, newShareToken } from "@/lib/data";
 import { CURRENT_CLINICIAN } from "@/lib/mock";
 import { getStore } from "@/lib/store";
 import type { Actor, Consent, ExerciseKey, Patient, Share, Side, Sex, WeightUnit } from "@/lib/types";
-import { EXERCISES, fmtLoad, makeLoad } from "@/lib/types";
-import { fullName } from "@/lib/format";
+import { EXERCISES, MAX_LOAD, fmtLoad, isValidLoadValue, makeLoad } from "@/lib/types";
+import { SESSION_NAME_MAX, defaultSessionName, fullName } from "@/lib/format";
 import { DEFAULT_FS } from "@/lib/signal";
 
 /** Clinician-only app. Kept as a parameter so callers stay explicit about who acts. */
@@ -315,9 +315,13 @@ export async function reviewSuggestionAction(input: {
   return { ok: true };
 }
 
-/** Sets the weight the recorder starts this patient's sets at. */
+/**
+ * Sets the weight the recorder starts this patient's sets at. The clinician types any number
+ * and picks kg or lb; the weight is saved on the patient in MongoDB with its unit and its kg value.
+ */
 export async function setPrescribedLoadAction(patientId: string, value: number, unit: WeightUnit): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (!Number.isFinite(value) || value < 0 || value > 200) return { ok: false, error: "Enter a weight between 0 and 200." };
+  if (unit !== "kg" && unit !== "lb") return { ok: false, error: "Pick kg or lb." };
+  if (!isValidLoadValue(value)) return { ok: false, error: `Enter a weight between 0 and ${MAX_LOAD}.` };
   const store = await getStore();
   const patient = await store.getPatient(patientId);
   if (!patient) return { ok: false, error: "Patient not found." };
@@ -328,17 +332,18 @@ export async function setPrescribedLoadAction(patientId: string, value: number, 
   return { ok: true };
 }
 
-/** Saves the clinic's list of weights (in kg or lb) that the recorder offers. */
-export async function saveWeightSettingsAction(unit: WeightUnit, options: number[]): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (unit !== "kg" && unit !== "lb") return { ok: false, error: "Unknown unit." };
-  if (!Array.isArray(options) || options.length > 60 || options.some((x) => typeof x !== "number" || !Number.isFinite(x) || x < 0 || x > 200))
-    return { ok: false, error: "Weights must be numbers between 0 and 200 (at most 60 of them)." };
-  // Tidy the list: round to 2 decimals, drop duplicates, smallest first.
-  const tidy = [...new Set(options.map((x) => Math.round(x * 100) / 100))].sort((a, b) => a - b);
-  if (!tidy.some((x) => x > 0)) return { ok: false, error: "Keep at least one weight above zero." };
+/**
+ * Renames a saved session. Whatever is typed is followed by the session's start time, the same way
+ * a name given while recording is built; an empty name goes back to the date.
+ */
+export async function renameSessionAction(patientId: string, sessionId: string, typed: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
   const store = await getStore();
-  await store.saveWeightSettings({ unit, options: tidy, updatedAt: new Date().toISOString(), updatedBy: CURRENT_CLINICIAN.name });
-  revalidatePath("/doctor/settings");
-  revalidatePath("/doctor", "layout");
-  return { ok: true };
+  const session = await store.getSession(sessionId);
+  if (!session || session.patientId !== patientId) return { ok: false, error: "Session not found." };
+  if (typed.trim().length > SESSION_NAME_MAX) return { ok: false, error: `Keep the name under ${SESSION_NAME_MAX} characters.` };
+  const name = defaultSessionName(session.startedAt, typed);
+  await store.upsertSession({ ...session, name });
+  await logAccess(patientId, clinicianActor, "session_renamed", `Renamed a session to “${name}”.`);
+  revalidatePatient(patientId);
+  return { ok: true, name };
 }

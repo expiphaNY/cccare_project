@@ -51,7 +51,4 @@ export class DemoStore extends MemoryStore {
   async updateSuggestion() {
     return this.readOnly();
   }
-  async saveWeightSettings() {
-    return this.readOnly();
-  }
 }
